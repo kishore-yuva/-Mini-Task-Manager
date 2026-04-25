@@ -1,6 +1,6 @@
 {
   "name": "Mini Task Manager",
-  "description": "A full-stack task management application with a React frontend, Express backend, and SQLite database.",
+  "description": "A full-stack task management application with a React frontend, Express backend, and MongoDB database.",
   "requestFramePermissions": [],
   "majorCapabilities": []
 }

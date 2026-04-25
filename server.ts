@@ -25,7 +25,10 @@ async function getDb() {
     }
 
     try {
-      client = new MongoClient(mongodbUri);
+      client = new MongoClient(mongodbUri, {
+        connectTimeoutMS: 5000,
+        serverSelectionTimeoutMS: 5000,
+      });
       await client.connect();
       db = client.db("taskmanager");
       console.log("🎨 MongoDB connected successfully.");
@@ -323,14 +326,3 @@ export async function createServer() {
 
   return app;
 }
-
-// Start the server
-createServer().then(app => {
-  const PORT = 3000;
-  app.listen(PORT, "0.0.0.0", () => {
-    console.log(`🚀 Server running on http://localhost:${PORT} (Env: ${process.env.NODE_ENV || 'development'})`);
-  });
-}).catch(err => {
-  console.error("❌ Failed to start server:", err);
-  process.exit(1);
-});
