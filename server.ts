@@ -12,32 +12,40 @@ dotenv.config();
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
-// Initialize MongoDB Connection
+// Initialize MongoDB Connection (Cached for Serverless)
 let client: MongoClient | null = null;
 let db: any = null;
 
 async function getDb() {
-  if (!db) {
-    const mongodbUri = process.env.MONGODB_URI;
-    
-    if (!mongodbUri || mongodbUri.includes("your_mongodb_uri") || mongodbUri.trim() === "" || mongodbUri === "base") {
-      throw new Error("MONGODB_URI is missing or misconfigured. Please provide your MongoDB Atlas connection string in Settings.");
-    }
+  if (db) return db;
 
-    try {
+  const mongodbUri = process.env.MONGODB_URI;
+  
+  if (!mongodbUri || mongodbUri.includes("your_mongodb_uri") || mongodbUri.trim() === "" || mongodbUri === "base") {
+    throw new Error("MONGODB_URI is missing. Please set this in your Netlify Environment Variables.");
+  }
+
+  try {
+    if (!client) {
+      console.log("🔋 Initializing new MongoDB client...");
       client = new MongoClient(mongodbUri, {
-        connectTimeoutMS: 5000,
-        serverSelectionTimeoutMS: 5000,
+        connectTimeoutMS: 10000,
+        serverSelectionTimeoutMS: 10000,
       });
       await client.connect();
-      db = client.db("taskmanager");
-      console.log("🎨 MongoDB connected successfully.");
-    } catch (err: any) {
-      console.error("❌ MongoDB connection failed:", err.message);
-      throw err;
+    } else {
+      console.log("♻️  Reusing existing MongoDB client.");
     }
+    
+    db = client.db("taskmanager");
+    return db;
+  } catch (err: any) {
+    console.error("❌ MongoDB connection failed:", err.message);
+    // Reset client to force reconnection on next attempt
+    client = null;
+    db = null;
+    throw err;
   }
-  return db;
 }
 
 const JWT_SECRET = process.env.JWT_SECRET || "default_secret_dont_use_in_prod";

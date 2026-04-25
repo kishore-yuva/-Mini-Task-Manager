@@ -147,7 +147,14 @@ export default function App() {
       if (!contentType || !contentType.includes("application/json")) {
         const text = await res.text();
         console.error('Auth response Error:', { url: endpoint, status: res.status, body: text.substring(0, 50) });
-        throw new Error(`Auth Error: Expected JSON but received ${contentType || 'text/html'}. (Status: ${res.status})`);
+        
+        let message = `Auth Error: Received ${contentType || 'text/plain'}. (Status: ${res.status})`;
+        if (res.status === 502) {
+          message = "502 Gateway Error: Your backend function crashed or timed out. Please check if MONGODB_URI is set in Netlify settings and IP Whitelisting is 0.0.0.0/0 in MongoDB Atlas.";
+        } else if (res.status === 500) {
+          message = "500 Internal Server Error: The backend failed. Check your Netlify Function logs for the exact error.";
+        }
+        throw new Error(message);
       }
 
       const data = await res.json();
