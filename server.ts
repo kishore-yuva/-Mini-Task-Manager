@@ -41,19 +41,21 @@ async function saveLocalTasks(tasks: any[]) {
 let mongoClient: MongoClient | null = null;
 let mongoDb: any = null;
 let activeAdapter: DbAdapter | null = null;
+let mongoFailedPermanently = false;
+let inMemoryTasks: any[] = [];
 
 async function getAdapter(): Promise<DbAdapter> {
   if (activeAdapter) return activeAdapter;
 
   const mongodbUri = process.env.MONGODB_URI;
-  const useMongo = mongodbUri && !mongodbUri.includes("your_mongodb_uri") && mongodbUri.trim() !== "" && mongodbUri !== "base";
+  const useMongo = !mongoFailedPermanently && mongodbUri && !mongodbUri.includes("your_mongodb_uri") && mongodbUri.trim() !== "" && mongodbUri !== "base";
 
   if (useMongo) {
     try {
       console.log("🔋 Attempting connection to MongoDB...");
       mongoClient = new MongoClient(mongodbUri!, {
-        connectTimeoutMS: 5000,
-        serverSelectionTimeoutMS: 5000,
+        connectTimeoutMS: 2000, // Fail fast to avoid 502 timeouts
+        serverSelectionTimeoutMS: 2000,
         socketTimeoutMS: 30000,
       });
       await mongoClient.connect();
@@ -85,44 +87,66 @@ async function getAdapter(): Promise<DbAdapter> {
       };
       return activeAdapter;
     } catch (err: any) {
-      console.warn("⚠️ MongoDB Connection Failed. Falling back to Local JSON database.", err.message);
+      console.warn("⚠️ MongoDB Connection Failed. Switching to Secondary Database.", err.message);
+      mongoFailedPermanently = true; // Don't try again for this process session
     }
   }
 
-  // Fallback to Local JSON
-  console.log("📂 Using Local JSON database (tasks.json)");
+  // Fallback to Local/In-Memory
+  console.log("📂 Using Local/In-Memory database backup");
   activeAdapter = {
     isMongo: false,
     getTasks: async (userId) => {
       const tasks = await getLocalTasks();
-      return tasks.filter(t => t.userId === userId).sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+      return (tasks.length > 0 ? tasks : inMemoryTasks).filter(t => t.userId === userId).sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
     },
     addTask: async (task) => {
       const tasks = await getLocalTasks();
+      const targetList = tasks.length > 0 || (await fs.stat(LOCAL_DB_PATH).catch(() => null)) ? tasks : inMemoryTasks;
       const newTask = { ...task, id: Math.random().toString(36).substr(2, 9) };
-      tasks.push(newTask);
-      await saveLocalTasks(tasks);
+      targetList.push(newTask);
+      try {
+        await saveLocalTasks(targetList === tasks ? tasks : inMemoryTasks);
+      } catch (e) {
+        console.warn("💾 Local file saving failed (possibly read-only FS), using memory only.");
+        inMemoryTasks = targetList;
+      }
       return newTask;
     },
     updateTask: async (id, userId, update) => {
-      const tasks = await getLocalTasks();
-      const idx = tasks.findIndex(t => t.id === id && t.userId === userId);
+      let tasks = await getLocalTasks();
+      if (tasks.length === 0 && inMemoryTasks.length > 0) tasks = inMemoryTasks;
+      const idx = tasks.findIndex(t => (t.id === id || (t._id && t._id.toString() === id)) && t.userId === userId);
       if (idx === -1) return null;
       tasks[idx] = { ...tasks[idx], ...update };
-      await saveLocalTasks(tasks);
+      try {
+        await saveLocalTasks(tasks);
+      } catch (e) {
+        inMemoryTasks = tasks;
+      }
       return tasks[idx];
     },
     deleteTask: async (id, userId) => {
-      const tasks = await getLocalTasks();
-      const filtered = tasks.filter(t => t.id !== id || t.userId !== userId);
+      let tasks = await getLocalTasks();
+      if (tasks.length === 0 && inMemoryTasks.length > 0) tasks = inMemoryTasks;
+      const filtered = tasks.filter(t => (t.id !== id && (!t._id || t._id.toString() !== id)) || t.userId !== userId);
       if (filtered.length === tasks.length) return false;
-      await saveLocalTasks(filtered);
+      try {
+        await saveLocalTasks(filtered);
+      } catch (e) {
+        inMemoryTasks = filtered;
+      }
       return true;
     },
     clearTasks: async (userId) => {
-      const tasks = await getLocalTasks();
+      let tasks = await getLocalTasks();
+      if (tasks.length === 0 && inMemoryTasks.length > 0) tasks = inMemoryTasks;
       const filtered = tasks.filter(t => t.userId !== userId);
-      await saveLocalTasks(filtered);
+      try {
+        await saveLocalTasks(filtered);
+      } catch (e) {
+        inMemoryTasks = filtered;
+      }
     }
   };
   return activeAdapter;

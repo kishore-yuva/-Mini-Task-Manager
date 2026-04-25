@@ -153,7 +153,9 @@ export default function App() {
         
         let message = `Task Error: Expected JSON but received ${contentType || 'text/html'} from ${requestUrl}. (Status: ${res.status})`;
         if (res.status === 502) {
-          message = "502 Bad Gateway: The backend function crashed or timed out. Possible causes: 1. MongoDB Atlas IP Whitelist is not 0.0.0.0/0. 2. Incorrect MONGODB_URI. 3. Connection timeout.";
+          message = "502 Gateway Timeout: The primary database (MongoDB) is not responding. Please check your MongoDB Atlas IP Whitelist (0.0.0.0/0). The app will automatically try to use a backup database.";
+        } else if (res.status === 500) {
+          message = "500 Internal Error: The server encountered an issue. Looking for backup storage...";
         }
         throw new Error(message);
       }
