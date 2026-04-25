@@ -11,7 +11,9 @@ import fs from "fs/promises";
 dotenv.config();
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const LOCAL_DB_PATH = path.join(process.cwd(), "tasks.json");
+const LOCAL_DB_PATH = process.env.VERCEL 
+  ? path.join("/tmp", "tasks.json")
+  : path.join(process.cwd(), "tasks.json");
 
 // Define a unified interface for Database interactions
 interface DbAdapter {
