@@ -6,10 +6,12 @@ import { z } from "zod";
 import cors from "cors";
 import dotenv from "dotenv";
 import fs from "fs/promises";
+import jwt from "jsonwebtoken";
 
 dotenv.config();
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const JWT_SECRET = process.env.JWT_SECRET || "fallback-secret-for-dev-only";
 const LOCAL_DB_PATH = process.env.VERCEL 
   ? path.join("/tmp", "tasks.json")
   : path.join(process.cwd(), "tasks.json");
@@ -171,6 +173,20 @@ async function getAdapter(): Promise<DbAdapter> {
 
 const DEFAULT_USER_ID = "public_user";
 
+// Authentication Middleware
+function authenticateToken(req: any, res: any, next: any) {
+  const authHeader = req.headers['authorization'];
+  const token = authHeader && authHeader.split(' ')[1];
+
+  if (!token) return res.status(401).json({ error: "Access denied. Token missing." });
+
+  jwt.verify(token, JWT_SECRET, (err: any, user: any) => {
+    if (err) return res.status(403).json({ error: "Invalid or expired token." });
+    req.user = user;
+    next();
+  });
+}
+
 export async function createServer() {
   const app = express();
   app.use(cors());
@@ -195,18 +211,47 @@ export async function createServer() {
     }
   });
 
-  // Auth Endpoint
+  // Auth Endpoint (Passwordless Email Login)
   apiRouter.post("/auth/login", async (req, res) => {
-    res.json({ token: "public_access", user: { id: DEFAULT_USER_ID, email: "public@example.com" } });
+    try {
+      const { email } = req.body;
+      if (!email || !email.includes("@")) {
+        return res.status(400).json({ error: "Valid email is required" });
+      }
+
+      const adapter = await getAdapter();
+      let user;
+
+      if (adapter.isMongo && mongoDb) {
+        user = await mongoDb.collection("users").findOne({ email });
+        if (!user) {
+          const result = await mongoDb.collection("users").insertOne({
+            email,
+            createdAt: new Date()
+          });
+          user = { _id: result.insertedId, email };
+        }
+      } else {
+        // Simple fallback for local/in-memory
+        user = { _id: "local_user_" + email, email };
+      }
+
+      const userId = user._id.toString();
+      const token = jwt.sign({ id: userId, email: user.email }, JWT_SECRET, { expiresIn: '7d' });
+
+      res.json({ token, user: { id: userId, email: user.email } });
+    } catch (error: any) {
+      console.error("Login error:", error);
+      res.status(500).json({ error: "Authentication failed" });
+    }
   });
 
-  // Public API Endpoints
-  apiRouter.get("/tasks", async (req, res) => {
+  // Protected API Endpoints
+  apiRouter.get("/tasks", authenticateToken, async (req: any, res) => {
     try {
-      console.log(`[API] GET /tasks started...`);
+      const userId = req.user.id;
       const adapter = await getAdapter();
-      console.log(`[API] Using adapter isMongo=${adapter.isMongo}`);
-      const tasks = await adapter.getTasks(DEFAULT_USER_ID);
+      const tasks = await adapter.getTasks(userId);
       const mapped = tasks.map(t => {
         const id = t.id || (t._id ? t._id.toString() : null);
         return { ...t, id: id || 'temp-id', _id: undefined };
@@ -214,16 +259,13 @@ export async function createServer() {
       res.json(mapped);
     } catch (error: any) {
       console.error("Fetch tasks error:", error);
-      res.status(500).json({ 
-        error: "Failed to fetch tasks.", 
-        details: error.message,
-        stack: process.env.NODE_ENV === 'production' ? undefined : error.stack
-      });
+      res.status(500).json({ error: "Failed to fetch tasks." });
     }
   });
 
-  apiRouter.post("/tasks", async (req, res) => {
+  apiRouter.post("/tasks", authenticateToken, async (req: any, res) => {
     try {
+      const userId = req.user.id;
       const taskSchema = z.object({
         title: z.string().min(1),
         status: z.enum(["pending", "completed"]),
@@ -234,7 +276,7 @@ export async function createServer() {
       const adapter = await getAdapter();
       
       const task = {
-        userId: DEFAULT_USER_ID,
+        userId,
         ...parsed,
         createdAt: new Date()
       };
@@ -242,14 +284,14 @@ export async function createServer() {
       const insertedTask = await adapter.addTask(task);
       res.status(201).json(insertedTask);
     } catch (error: any) {
-      console.error("Create task error:", error.message);
       res.status(500).json({ error: error.message || "Failed to create task" });
     }
   });
 
-  apiRouter.patch("/tasks/:id", async (req, res) => {
+  apiRouter.patch("/tasks/:id", authenticateToken, async (req: any, res) => {
     try {
       const { id } = req.params;
+      const userId = req.user.id;
       const taskSchema = z.object({
         title: z.string().min(1).optional(),
         status: z.enum(["pending", "completed"]).optional(),
@@ -259,7 +301,7 @@ export async function createServer() {
       const updateData = taskSchema.parse(req.body);
       const adapter = await getAdapter();
       
-      const updatedTask = await adapter.updateTask(id, DEFAULT_USER_ID, updateData);
+      const updatedTask = await adapter.updateTask(id, userId, updateData);
 
       if (!updatedTask) {
         return res.status(404).json({ error: "Task not found" });
@@ -267,16 +309,16 @@ export async function createServer() {
 
       res.json(updatedTask);
     } catch (error: any) {
-      console.error("Update task error:", error.message);
       res.status(500).json({ error: "Failed to update task" });
     }
   });
 
-  apiRouter.delete("/tasks/:id", async (req, res) => {
+  apiRouter.delete("/tasks/:id", authenticateToken, async (req: any, res) => {
     try {
       const { id } = req.params;
+      const userId = req.user.id;
       const adapter = await getAdapter();
-      const success = await adapter.deleteTask(id, DEFAULT_USER_ID);
+      const success = await adapter.deleteTask(id, userId);
       
       if (!success) {
         return res.status(404).json({ error: "Task not found" });
@@ -284,18 +326,17 @@ export async function createServer() {
       
       res.status(204).send();
     } catch (error: any) {
-      console.error("Delete task error:", error.message);
       res.status(500).json({ error: "Failed to delete task" });
     }
   });
 
-  apiRouter.delete("/tasks", async (req, res) => {
+  apiRouter.delete("/tasks", authenticateToken, async (req: any, res) => {
     try {
+      const userId = req.user.id;
       const adapter = await getAdapter();
-      await adapter.clearTasks(DEFAULT_USER_ID);
+      await adapter.clearTasks(userId);
       res.status(204).send();
     } catch (error: any) {
-      console.error("Batch delete error:", error.message);
       res.status(500).json({ error: "Failed to delete tasks" });
     }
   });

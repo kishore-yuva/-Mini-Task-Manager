@@ -59,6 +59,10 @@ export default function App() {
     : '';
   
   const [tasks, setTasks] = useState<Task[]>([]);
+  const [user, setUser] = useState<User | null>(null);
+  const [token, setToken] = useState<string | null>(localStorage.getItem('token'));
+  const [email, setEmail] = useState('');
+  const [authLoading, setAuthLoading] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [newTitle, setNewTitle] = useState('');
   const [newStatus, setNewStatus] = useState<'pending' | 'completed'>('pending');
@@ -74,9 +78,49 @@ export default function App() {
   const [dbStatus, setDbStatus] = useState<{ status: string; db: string; configured: boolean; connected: boolean } | null>(null);
 
   useEffect(() => {
-    checkHealth();
-    fetchTasks();
+    const savedUser = localStorage.getItem('user');
+    if (savedUser) setUser(JSON.parse(savedUser));
   }, []);
+
+  useEffect(() => {
+    if (token) {
+      checkHealth();
+      fetchTasks();
+    }
+  }, [token]);
+
+  const handleLogin = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!email.trim() || !email.includes('@')) return;
+    setAuthLoading(true);
+    setError(null);
+    try {
+      const res = await fetch(`${apiUrl}/api/auth/login`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email })
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Login failed');
+      
+      setToken(data.token);
+      setUser(data.user);
+      localStorage.setItem('token', data.token);
+      localStorage.setItem('user', JSON.stringify(data.user));
+    } catch (err: any) {
+      setError(err.message);
+    } finally {
+      setAuthLoading(false);
+    }
+  };
+
+  const handleLogout = () => {
+    setToken(null);
+    setUser(null);
+    setTasks([]);
+    localStorage.removeItem('token');
+    localStorage.removeItem('user');
+  };
 
   const checkHealth = async () => {
     try {
@@ -94,10 +138,13 @@ export default function App() {
   };
 
   const fetchTasks = async () => {
+    if (!token) return;
     setLoading(true);
     const requestUrl = `${apiUrl}/api/tasks`;
     try {
-      const res = await fetch(requestUrl);
+      const res = await fetch(requestUrl, {
+        headers: { 'Authorization': `Bearer ${token}` }
+      });
       
       const contentType = res.headers.get("content-type");
       if (!contentType || !contentType.includes("application/json")) {
@@ -130,7 +177,8 @@ export default function App() {
       const res = await fetch(requestUrl, {
         method: 'POST',
         headers: { 
-          'Content-Type': 'application/json'
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`
         },
         body: JSON.stringify({ 
           title: newTitle, 
@@ -169,7 +217,8 @@ export default function App() {
       const res = await fetch(`${apiUrl}/api/tasks/${task.id}`, {
         method: 'PATCH',
         headers: { 
-          'Content-Type': 'application/json'
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`
         },
         body: JSON.stringify({ status: newStatus }),
       });
@@ -199,7 +248,8 @@ export default function App() {
       const res = await fetch(`${apiUrl}/api/tasks/${id}`, {
         method: 'PATCH',
         headers: { 
-          'Content-Type': 'application/json'
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`
         },
         body: JSON.stringify({ 
           title: editTitle,
@@ -224,7 +274,8 @@ export default function App() {
   const deleteTask = async (id: string) => {
     try {
       const res = await fetch(`${apiUrl}/api/tasks/${id}`, { 
-        method: 'DELETE'
+        method: 'DELETE',
+        headers: { 'Authorization': `Bearer ${token}` }
       });
 
       if (!res.ok) throw new Error('Failed to delete task');
@@ -242,7 +293,8 @@ export default function App() {
     
     try {
       const res = await fetch(`${apiUrl}/api/tasks`, { 
-        method: 'DELETE'
+        method: 'DELETE',
+        headers: { 'Authorization': `Bearer ${token}` }
       });
       
       if (!res.ok) throw new Error('Failed to delete all tasks');
@@ -261,6 +313,104 @@ export default function App() {
   const filteredTasks = tasks.filter(task => 
     task.title.toLowerCase().includes(searchQuery.toLowerCase())
   );
+
+  const containerVariants = {
+    hidden: { opacity: 0 },
+    show: {
+      opacity: 1,
+      transition: {
+        staggerChildren: 0.1
+      }
+    }
+  };
+
+  const itemVariants = {
+    hidden: { opacity: 0, y: 10 },
+    show: { opacity: 1, y: 0 }
+  };
+
+  if (!token) {
+    return (
+      <div className="min-h-screen bg-zinc-950 text-zinc-100 flex items-center justify-center p-4 font-sans">
+        <motion.div 
+          initial={{ opacity: 0, y: 20 }}
+          animate={{ opacity: 1, y: 0 }}
+          className="bg-zinc-900 border border-zinc-800 p-8 rounded-3xl w-full max-w-md shadow-2xl"
+        >
+          <motion.div 
+            initial={{ scale: 0.8, opacity: 0 }}
+            animate={{ scale: 1, opacity: 1 }}
+            transition={{ type: "spring", stiffness: 260, damping: 20 }}
+            className="flex flex-col items-center mb-8"
+          >
+            <motion.div 
+              whileHover={{ rotate: 10, scale: 1.1 }}
+              className="w-16 h-16 bg-indigo-600 rounded-2xl flex items-center justify-center shadow-lg shadow-indigo-500/20 mb-4"
+            >
+              <LayoutGrid className="text-white w-8 h-8" />
+            </motion.div>
+            <h1 className="text-2xl font-bold tracking-tight text-white">{appName}</h1>
+            <p className="text-sm text-zinc-500 mt-2">Sign in to manage your tasks</p>
+          </motion.div>
+
+          <motion.form 
+            initial={{ opacity: 0, y: 10 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ delay: 0.2 }}
+            onSubmit={handleLogin} 
+            className="space-y-4"
+          >
+            <div className="space-y-2">
+              <label className="text-xs font-bold text-zinc-500 uppercase flex items-center gap-2">
+                <Mail className="w-3.5 h-3.5" /> Email Address
+              </label>
+              <input 
+                type="email" 
+                placeholder="yours@example.com"
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+                required
+                className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-4 py-3 text-sm text-zinc-100 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 transition-all font-medium"
+              />
+            </div>
+            
+            <AnimatePresence>
+              {error && (
+                <motion.div 
+                  initial={{ opacity: 0, height: 0 }}
+                  animate={{ opacity: 1, height: 'auto' }}
+                  exit={{ opacity: 0, height: 0 }}
+                  className="bg-red-500/10 border border-red-500/20 text-red-500 text-xs p-3 rounded-lg flex items-center gap-2 overflow-hidden"
+                >
+                  <AlertCircle className="w-4 h-4 flex-shrink-0" />
+                  {error}
+                </motion.div>
+              )}
+            </AnimatePresence>
+
+            <motion.button 
+              type="submit"
+              whileHover={{ scale: 1.02 }}
+              whileTap={{ scale: 0.98 }}
+              disabled={authLoading}
+              className="w-full bg-indigo-600 hover:bg-indigo-500 text-white font-bold py-3 rounded-xl transition-all shadow-lg shadow-indigo-600/10 flex items-center justify-center gap-2 mt-4 active:scale-[0.98] disabled:opacity-50"
+            >
+              {authLoading ? <Loader2 className="w-5 h-5 animate-spin" /> : "Sign In with Email"}
+            </motion.button>
+            
+            <motion.p 
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              transition={{ delay: 0.4 }}
+              className="text-[10px] text-zinc-600 text-center uppercase tracking-widest mt-6 font-bold"
+            >
+              Passwordless Authentication • Secure & Simple
+            </motion.p>
+          </motion.form>
+        </motion.div>
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-screen bg-zinc-950 text-zinc-100 p-4 md:p-8 flex flex-col font-sans overflow-x-hidden">
@@ -392,6 +542,17 @@ export default function App() {
               </span>
             </div>
             <div className="flex items-center gap-2">
+              <div className="hidden sm:flex flex-col items-end mr-2">
+                <span className="text-xs text-zinc-500 font-medium">Signed in as</span>
+                <span className="text-xs text-indigo-400 font-bold truncate max-w-[120px]">{user?.email}</span>
+              </div>
+              <button 
+                onClick={handleLogout}
+                className="p-2 text-zinc-500 hover:text-red-400 transition-colors"
+                title="Logout"
+              >
+                <LogOut className="w-5 h-5" />
+              </button>
               <button 
                 onClick={() => setShowGuide(!showGuide)}
                 className={`p-2 transition-colors ${showGuide ? 'text-indigo-400' : 'text-zinc-500 hover:text-white'}`}
@@ -451,7 +612,12 @@ export default function App() {
               </div>
             </div>
 
-            <div className="flex-grow overflow-y-auto pr-2 custom-scrollbar space-y-3">
+            <motion.div 
+              variants={containerVariants}
+              initial="hidden"
+              animate="show"
+              className="flex-grow overflow-y-auto pr-2 custom-scrollbar space-y-3"
+            >
               {loading ? (
                 <div className="flex flex-col items-center justify-center h-full text-zinc-500 py-10">
                   <Loader2 className="w-8 h-8 animate-spin mb-2" />
@@ -479,9 +645,11 @@ export default function App() {
                     <motion.div
                       key={task.id}
                       layout
-                      initial={{ opacity: 0, x: -20 }}
-                      animate={{ opacity: 1, x: 0 }}
+                      variants={itemVariants}
+                      initial="hidden"
+                      animate="show"
                       exit={{ opacity: 0, scale: 0.95 }}
+                      whileHover={{ x: 4, transition: { duration: 0.2 } }}
                       className={`group bg-zinc-900 border p-4 rounded-2xl flex items-center justify-between transition-all ${editingId === task.id ? 'border-indigo-500 shadow-lg shadow-indigo-500/10' : 'border-zinc-800/50 hover:border-indigo-500/50 hover:bg-zinc-800/50'}`}
                     >
                       <div className="flex items-center gap-4 flex-1">
@@ -563,11 +731,16 @@ export default function App() {
                   ))}
                 </AnimatePresence>
               )}
-            </div>
+            </motion.div>
           </div>
 
           {/* Creation Panel */}
-          <div className="md:col-span-4 md:row-span-3 bg-zinc-900/50 border border-zinc-800 rounded-3xl p-6 flex flex-col gap-4 text-zinc-100">
+          <motion.div 
+            initial={{ opacity: 0, x: 20 }}
+            animate={{ opacity: 1, x: 0 }}
+            transition={{ delay: 0.2 }}
+            className="md:col-span-4 md:row-span-3 bg-zinc-900/50 border border-zinc-800 rounded-3xl p-6 flex flex-col gap-4 text-zinc-100"
+          >
             <h2 className="text-lg font-semibold flex items-center gap-2">
               <Plus className="w-5 h-5 text-indigo-400" />
               Create Task
@@ -617,28 +790,42 @@ export default function App() {
               </div>
               
 
-              <button 
+              <motion.button 
                 type="submit"
+                whileHover={{ scale: 1.01 }}
+                whileTap={{ scale: 0.98 }}
                 disabled={isSubmitting || !newTitle.trim()}
                 className="w-full bg-indigo-600 hover:bg-indigo-500 text-white font-semibold py-3 rounded-xl transition-all shadow-lg shadow-indigo-600/10 active:scale-95 disabled:opacity-50 disabled:active:scale-100 flex items-center justify-center gap-2"
               >
                 {isSubmitting ? <Loader2 className="w-4 h-4 animate-spin" /> : <Check className="w-4 h-4" />}
                 Save Task
-              </button>
+              </motion.button>
             </form>
-          </div>
+          </motion.div>
 
           {/* Total Tasks Box */}
-          <div className="md:col-span-4 md:row-span-1 bg-zinc-900 border border-zinc-800 rounded-3xl p-6 flex items-center justify-between transition-colors group">
+          <motion.div 
+            initial={{ opacity: 0, y: 20 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ delay: 0.3 }}
+            whileHover={{ y: -5 }}
+            className="md:col-span-4 md:row-span-1 bg-zinc-900 border border-zinc-800 rounded-3xl p-6 flex items-center justify-between transition-colors group"
+          >
             <div>
               <p className="text-zinc-500 text-xs font-bold uppercase tracking-wider">Total Tasks</p>
               <p className="text-3xl font-bold mt-1 text-white">{tasks.length}</p>
             </div>
             <LayoutGrid className="w-8 h-8 text-zinc-800 group-hover:text-indigo-500/50 transition-colors" />
-          </div>
+          </motion.div>
 
           {/* Pending Box */}
-          <div className="md:col-span-2 md:row-span-2 bg-zinc-900 border border-zinc-800 rounded-3xl p-6 flex flex-col justify-between hover:border-indigo-500/30 transition-colors">
+          <motion.div 
+            initial={{ opacity: 0, y: 20 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ delay: 0.4 }}
+            whileHover={{ y: -5 }}
+            className="md:col-span-2 md:row-span-2 bg-zinc-900 border border-zinc-800 rounded-3xl p-6 flex flex-col justify-between hover:border-indigo-500/30 transition-colors"
+          >
             <div>
               <p className="text-zinc-500 text-xs font-bold uppercase tracking-wider">Pending</p>
               <p className="text-3xl font-bold mt-1 text-white">{pendingCount}</p>
@@ -647,10 +834,16 @@ export default function App() {
               <Circle className="w-4 h-4" />
               <span>In Queue</span>
             </div>
-          </div>
+          </motion.div>
 
           {/* Completed Box */}
-          <div className="md:col-span-2 md:row-span-2 bg-indigo-600 rounded-3xl p-6 flex flex-col justify-between relative overflow-hidden shadow-2xl shadow-indigo-500/20 group">
+          <motion.div 
+            initial={{ opacity: 0, y: 20 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ delay: 0.5 }}
+            whileHover={{ y: -5 }}
+            className="md:col-span-2 md:row-span-2 bg-indigo-600 rounded-3xl p-6 flex flex-col justify-between relative overflow-hidden shadow-2xl shadow-indigo-500/20 group"
+          >
             <div className="absolute -right-2 -bottom-2 opacity-10 group-hover:scale-110 transition-transform text-white">
               <CheckCircle2 className="w-24 h-24" />
             </div>
@@ -662,7 +855,7 @@ export default function App() {
               <Check className="w-4 h-4" />
               <span>Finished</span>
             </div>
-          </div>
+          </motion.div>
         </div>
       </div>
     </div>
