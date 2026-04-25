@@ -51,6 +51,7 @@ interface User {
 }
 
 export default function App() {
+  const appName = import.meta.env.VITE_APP_NAME || 'Mini Task Manager';
   const [user, setUser] = useState<User | null>(null);
   const [token, setToken] = useState<string | null>(localStorage.getItem('token'));
   const [email, setEmail] = useState('');
@@ -305,7 +306,7 @@ export default function App() {
             <div className="w-12 h-12 bg-indigo-600 rounded-xl flex items-center justify-center shadow-lg shadow-indigo-500/20">
               <LayoutGrid className="text-white w-6 h-6" />
             </div>
-            <h1 className="text-2xl font-bold text-white">Mini Task Manager</h1>
+            <h1 className="text-2xl font-bold text-white">{appName}</h1>
           </div>
 
           <h2 className="text-xl font-semibold text-zinc-100 mb-2 text-center">
@@ -476,7 +477,7 @@ export default function App() {
               <LayoutGrid className="text-white w-6 h-6" />
             </div>
             <div>
-              <h1 className="text-2xl font-bold tracking-tight text-white">Mini Task Manager</h1>
+              <h1 className="text-2xl font-bold tracking-tight text-white">{appName}</h1>
               <p className="text-xs text-zinc-500 uppercase tracking-widest font-semibold">Efficient Workspace</p>
             </div>
           </div>
