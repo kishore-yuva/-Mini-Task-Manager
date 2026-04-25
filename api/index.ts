@@ -1,10 +1,15 @@
 import { createServer } from "../server";
 
-let app: any;
+let cachedApp: any = null;
 
 export default async (req: any, res: any) => {
-  if (!app) {
-    app = await createServer();
+  try {
+    if (!cachedApp) {
+      cachedApp = await createServer();
+    }
+    return cachedApp(req, res);
+  } catch (err: any) {
+    console.error("Vercel Function Error:", err);
+    res.status(500).send(`Server Initialization Error: ${err.message}`);
   }
-  return app(req, res);
 };

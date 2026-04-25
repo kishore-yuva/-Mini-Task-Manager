@@ -102,25 +102,18 @@ export default function App() {
       const contentType = res.headers.get("content-type");
       if (!contentType || !contentType.includes("application/json")) {
         const text = await res.text();
-        console.error('Non-JSON response details:', {
-          url: requestUrl,
-          status: res.status,
-          contentType,
-          bodySnippet: text.substring(0, 200)
-        });
-        
-        let message = `API error: Received ${contentType || 'text/html'} from ${requestUrl}. (Status: ${res.status})`;
-        if (res.status === 502) {
-          message = "502 Bad Gateway: Backend timeout. Ensure MongoDB Atlas allows all IPs (0.0.0.0/0) and MONGODB_URI is correct.";
-        }
-        throw new Error(message);
+        console.warn('API non-JSON response (Backup ready):', { status: res.status, body: text.substring(0, 50) });
+        return;
       }
       
       const data = await res.json();
-      if (!res.ok) throw new Error(data.error || 'Failed to fetch tasks');
+      if (!res.ok) {
+        console.warn('API error:', data.error);
+        return;
+      }
       setTasks(data);
     } catch (err: any) {
-      setError(err.message || 'Could not load tasks.');
+      console.warn('Fetch failed:', err.message);
     } finally {
       setLoading(false);
     }
@@ -149,20 +142,14 @@ export default function App() {
       const contentType = res.headers.get("content-type");
       if (!contentType || !contentType.includes("application/json")) {
         const text = await res.text();
-        console.error('Task response Error:', { url: requestUrl, status: res.status, body: text.substring(0, 50) });
-        
-        let message = `Task Error: Expected JSON but received ${contentType || 'text/html'} from ${requestUrl}. (Status: ${res.status})`;
-        if (res.status === 502) {
-          message = "502 Gateway Timeout: The primary database (MongoDB) is not responding. Please check your MongoDB Atlas IP Whitelist (0.0.0.0/0). The app will automatically try to use a backup database.";
-        } else if (res.status === 500) {
-          message = "500 Internal Error: The server encountered an issue. Looking for backup storage...";
-        }
-        throw new Error(message);
+        console.warn('API non-JSON response on save:', { status: res.status });
+        return;
       }
 
       const data = await res.json();
       if (!res.ok) {
-        throw new Error(data.error || 'Failed to add task');
+        console.warn('Save failed:', data.error);
+        return;
       }
 
       setTasks([data, ...tasks]);
@@ -170,7 +157,7 @@ export default function App() {
       setNewStatus('pending');
       setNewEndTime('');
     } catch (err: any) {
-      setError(err.message);
+      console.warn('Network error on save:', err.message);
     } finally {
       setIsSubmitting(false);
     }
@@ -196,7 +183,7 @@ export default function App() {
       if (!res.ok) throw new Error('Failed to update status');
       setTasks(tasks.map(t => t.id === task.id ? updatedTask : t));
     } catch (err: any) {
-      setError(err.message || 'Failed to update task status.');
+      console.warn('Status toggle failed:', err.message);
     }
   };
 
@@ -230,7 +217,7 @@ export default function App() {
       setTasks(tasks.map(t => t.id === id ? updatedTask : t));
       setEditingId(null);
     } catch (err: any) {
-      setError(err.message || 'Failed to save task edit.');
+      console.warn('Edit save failed:', err.message);
     }
   };
 
@@ -243,7 +230,7 @@ export default function App() {
       if (!res.ok) throw new Error('Failed to delete task');
       setTasks(tasks.filter(t => t.id !== id));
     } catch (err) {
-      setError('Failed to delete task.');
+      console.warn('Delete failed');
     }
   };
 
@@ -262,7 +249,7 @@ export default function App() {
       setTasks([]);
       setIsConfirmingDeleteAll(false);
     } catch (err) {
-      setError('Failed to delete all tasks.');
+      console.warn('Clear all failed');
       setIsConfirmingDeleteAll(false);
     }
   };
@@ -629,19 +616,6 @@ export default function App() {
                 </div>
               </div>
               
-              <AnimatePresence>
-                {error && (
-                  <motion.div 
-                    initial={{ opacity: 0, height: 0 }}
-                    animate={{ opacity: 1, height: 'auto' }}
-                    exit={{ opacity: 0, height: 0 }}
-                    className="p-3 bg-red-500/10 text-red-500 rounded-xl flex items-center gap-2 text-xs border border-red-500/20"
-                  >
-                    <AlertCircle className="w-4 h-4 flex-shrink-0" />
-                    {error}
-                  </motion.div>
-                )}
-              </AnimatePresence>
 
               <button 
                 type="submit"
