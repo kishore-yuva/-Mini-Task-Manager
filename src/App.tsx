@@ -14,7 +14,7 @@ const USER_MANUAL_CONTENT = `
 Welcome to **Mini Task Manager**, a sleek, professional workspace designed for efficient task tracking and productivity.
 
 ## 🚀 Getting Started
-Authentication is seamless. Just enter your email to login or create an account. Your session persists locally for convenience.
+Direct and instant access. No account creation or login required. Just start managing your tasks immediately in this unified workspace.
 
 ## 📋 Managing Tasks
 
@@ -57,9 +57,6 @@ export default function App() {
   const apiUrl = (rawApiUrl.startsWith('http') || rawApiUrl.startsWith('/')) 
     ? (rawApiUrl.endsWith('/') ? rawApiUrl.slice(0, -1) : rawApiUrl)
     : '';
-  const [user, setUser] = useState<User | null>(null);
-  const [token, setToken] = useState<string | null>(localStorage.getItem('token'));
-  const [email, setEmail] = useState('');
   
   const [tasks, setTasks] = useState<Task[]>([]);
   const [searchQuery, setSearchQuery] = useState('');
@@ -78,12 +75,8 @@ export default function App() {
 
   useEffect(() => {
     checkHealth();
-    if (token) {
-      fetchTasks();
-    } else {
-      setLoading(false);
-    }
-  }, [token]);
+    fetchTasks();
+  }, []);
 
   const checkHealth = async () => {
     try {
@@ -104,9 +97,7 @@ export default function App() {
     setLoading(true);
     const requestUrl = `${apiUrl}/api/tasks`;
     try {
-      const res = await fetch(requestUrl, {
-        headers: { 'Authorization': `Bearer ${token}` }
-      });
+      const res = await fetch(requestUrl);
       
       const contentType = res.headers.get("content-type");
       if (!contentType || !contentType.includes("application/json")) {
@@ -130,54 +121,6 @@ export default function App() {
     }
   };
 
-  const handleAuth = async (e: any) => {
-    e.preventDefault();
-    setIsSubmitting(true);
-    setError(null);
-    const endpoint = `${apiUrl}/api/auth/login`;
-    
-    try {
-      const res = await fetch(endpoint, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email }),
-      });
-      
-      const contentType = res.headers.get("content-type");
-      if (!contentType || !contentType.includes("application/json")) {
-        const text = await res.text();
-        console.error('Auth response Error:', { url: endpoint, status: res.status, body: text.substring(0, 50) });
-        
-        let message = `Auth Error: Received ${contentType || 'text/plain'}. (Status: ${res.status})`;
-        if (res.status === 502) {
-          message = "502 Gateway Error: Your backend function crashed or timed out. Please check if MONGODB_URI is set in Netlify settings and IP Whitelisting is 0.0.0.0/0 in MongoDB Atlas.";
-        } else if (res.status === 500) {
-          message = "500 Internal Server Error: The backend failed. Check your Netlify Function logs for the exact error.";
-        }
-        throw new Error(message);
-      }
-
-      const data = await res.json();
-      
-      if (!res.ok) throw new Error(data.error || 'Authentication failed');
-
-      localStorage.setItem('token', data.token);
-      setToken(data.token);
-      setUser(data.user);
-    } catch (err: any) {
-      setError(err.message);
-    } finally {
-      setIsSubmitting(false);
-    }
-  };
-
-  const logout = () => {
-    localStorage.removeItem('token');
-    setToken(null);
-    setUser(null);
-    setTasks([]);
-  };
-
   const addTask = async (e: any) => {
     e.preventDefault();
     if (!newTitle.trim()) return;
@@ -189,8 +132,7 @@ export default function App() {
       const res = await fetch(requestUrl, {
         method: 'POST',
         headers: { 
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${token}`
+          'Content-Type': 'application/json'
         },
         body: JSON.stringify({ 
           title: newTitle, 
@@ -198,11 +140,6 @@ export default function App() {
           endTime: newEndTime || null 
         }),
       });
-
-      if (res.status === 401 || res.status === 403) {
-        logout();
-        return;
-      }
       
       const contentType = res.headers.get("content-type");
       if (!contentType || !contentType.includes("application/json")) {
@@ -233,15 +170,10 @@ export default function App() {
       const res = await fetch(`${apiUrl}/api/tasks/${task.id}`, {
         method: 'PATCH',
         headers: { 
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${token}`
+          'Content-Type': 'application/json'
         },
         body: JSON.stringify({ status: newStatus }),
       });
-      if (res.status === 401 || res.status === 403) {
-        logout();
-        return;
-      }
       
       const contentType = res.headers.get("content-type");
       if (!contentType || !contentType.includes("application/json")) {
@@ -268,18 +200,13 @@ export default function App() {
       const res = await fetch(`${apiUrl}/api/tasks/${id}`, {
         method: 'PATCH',
         headers: { 
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${token}`
+          'Content-Type': 'application/json'
         },
         body: JSON.stringify({ 
           title: editTitle,
           endTime: editEndTime || null
         }),
       });
-      if (res.status === 401 || res.status === 403) {
-        logout();
-        return;
-      }
 
       const contentType = res.headers.get("content-type");
       if (!contentType || !contentType.includes("application/json")) {
@@ -298,13 +225,8 @@ export default function App() {
   const deleteTask = async (id: string) => {
     try {
       const res = await fetch(`${apiUrl}/api/tasks/${id}`, { 
-        method: 'DELETE',
-        headers: { 'Authorization': `Bearer ${token}` }
+        method: 'DELETE'
       });
-      if (res.status === 401 || res.status === 403) {
-        logout();
-        return;
-      }
 
       if (!res.ok) throw new Error('Failed to delete task');
       setTasks(tasks.filter(t => t.id !== id));
@@ -321,13 +243,8 @@ export default function App() {
     
     try {
       const res = await fetch(`${apiUrl}/api/tasks`, { 
-        method: 'DELETE',
-        headers: { 'Authorization': `Bearer ${token}` }
+        method: 'DELETE'
       });
-      if (res.status === 401 || res.status === 403) {
-        logout();
-        return;
-      }
       
       if (!res.ok) throw new Error('Failed to delete all tasks');
       setTasks([]);
@@ -345,84 +262,6 @@ export default function App() {
   const filteredTasks = tasks.filter(task => 
     task.title.toLowerCase().includes(searchQuery.toLowerCase())
   );
-
-  if (!token) {
-    return (
-      <div className="min-h-screen bg-zinc-950 flex items-center justify-center p-4">
-        <motion.div 
-          initial={{ opacity: 0, y: 20 }}
-          animate={{ opacity: 1, y: 0 }}
-          className="w-full max-w-md bg-zinc-900 border border-zinc-800 rounded-3xl p-8 shadow-2xl"
-        >
-          <div className="flex items-center gap-3 mb-8 justify-center">
-            <div className="w-12 h-12 bg-indigo-600 rounded-xl flex items-center justify-center shadow-lg shadow-indigo-500/20">
-              <LayoutGrid className="text-white w-6 h-6" />
-            </div>
-            <h1 className="text-2xl font-bold text-white">{appName}</h1>
-          </div>
-
-          <h2 className="text-xl font-semibold text-zinc-100 mb-2 text-center">
-            Access Workspace
-          </h2>
-          <p className="text-zinc-500 text-sm text-center mb-8">
-            Enter your email to continue to your professional management tool
-          </p>
-
-          <form onSubmit={handleAuth} className="space-y-6">
-            <div className="space-y-1.5">
-              <label className="text-xs font-bold text-zinc-500 uppercase flex items-center gap-2">
-                <Mail className="w-3 h-3" /> Email Address
-              </label>
-              <input 
-                type="email" 
-                required
-                placeholder="you@example.com"
-                value={email}
-                onChange={(e) => setEmail(e.target.value)}
-                className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-4 py-3 text-sm text-zinc-100 focus:outline-none focus:border-indigo-500 transition-all"
-              />
-            </div>
-
-            {error && (
-              <div className="space-y-3">
-                <div className="p-3 bg-red-500/10 border border-red-500/20 rounded-xl text-red-500 text-xs flex items-center gap-2">
-                  <AlertCircle className="w-4 h-4" />
-                  {error}
-                </div>
-                {dbStatus && !dbStatus.configured ? (
-                  <div className="p-4 bg-indigo-500/10 border border-indigo-500/20 rounded-xl text-indigo-200 text-[10px] leading-relaxed">
-                    <p className="font-bold mb-1 uppercase tracking-wider text-indigo-500">Database Setup Required:</p>
-                    <ol className="list-decimal list-inside space-y-1">
-                      <li>Open <strong>Settings</strong> (gear icon)</li>
-                      <li>Go to <strong>Environment Variables</strong></li>
-                      <li>Add your MongoDB <code>MONGODB_URI</code></li>
-                      <li>The app will automatically connect once configured</li>
-                    </ol>
-                  </div>
-                ) : null}
-              </div>
-            )}
-
-            <button 
-              disabled={isSubmitting}
-              className="w-full bg-indigo-600 hover:bg-indigo-500 text-white font-semibold py-3 rounded-xl transition-all shadow-lg shadow-indigo-600/10 active:scale-95 disabled:opacity-50"
-            >
-              {isSubmitting ? <Loader2 className="w-5 h-5 animate-spin mx-auto" /> : 'Get Started'}
-            </button>
-          </form>
-
-          {dbStatus && (
-            <div className="mt-8 flex justify-center">
-              <div className={`px-2 py-1 rounded-full text-[9px] font-bold uppercase tracking-widest flex items-center gap-1.5 ${dbStatus.connected ? 'bg-emerald-500/10 text-emerald-500 border border-emerald-500/20' : 'bg-amber-500/10 text-amber-500 border border-amber-500/20'}`}>
-                <div className={`w-1 h-1 rounded-full animate-pulse ${dbStatus.connected ? 'bg-emerald-500' : 'bg-amber-500'}`} />
-                System Status: {dbStatus.db} {dbStatus.connected ? '(Connected)' : '(Offline)'}
-              </div>
-            </div>
-          )}
-        </motion.div>
-      </div>
-    );
-  }
 
   return (
     <div className="min-h-screen bg-zinc-950 text-zinc-100 p-4 md:p-8 flex flex-col font-sans overflow-x-hidden">
@@ -551,13 +390,6 @@ export default function App() {
                 title="User Guide"
               >
                 <HelpCircle className="w-5 h-5" />
-              </button>
-              <button 
-                onClick={logout}
-                className="p-2 text-zinc-500 hover:text-white transition-colors"
-                title="Logout"
-              >
-                <LogOut className="w-5 h-5" />
               </button>
             </div>
           </div>

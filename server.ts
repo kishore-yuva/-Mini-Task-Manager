@@ -50,27 +50,8 @@ async function getDb() {
 
 const JWT_SECRET = process.env.JWT_SECRET || "default_secret_dont_use_in_prod";
 
-// Middleware to verify JWT
-const authenticateToken = (req: any, res: any, next: any) => {
-  const authHeader = req.headers['authorization'];
-  const token = authHeader && authHeader.split(' ')[1];
-
-  console.log(`[AUTH] Checking token for ${req.url}`);
-
-  if (!token) {
-    console.warn(`[AUTH] No token provided for ${req.url}`);
-    return res.status(401).json({ error: "Access token required" });
-  }
-
-  jwt.verify(token, JWT_SECRET, (err: any, user: any) => {
-    if (err) {
-      console.warn(`[AUTH] Token verification failed: ${err.message}`);
-      return res.status(403).json({ error: "Invalid or expired token" });
-    }
-    req.user = user;
-    next();
-  });
-};
+// Removed authenticateToken middleware for public access
+const DEFAULT_USER_ID = "public_user";
 
 export async function createServer() {
   const app = express();
@@ -115,45 +96,18 @@ export async function createServer() {
     });
   });
 
-  // Auth Endpoint
+  // Auth Endpoint (Kept for compatibility but effectively bypassed)
   apiRouter.post("/auth/login", async (req, res) => {
-    try {
-      const loginSchema = z.object({ email: z.string().email() });
-      const result = loginSchema.safeParse(req.body);
-      
-      if (!result.success) {
-        return res.status(400).json({ error: "Invalid email format" });
-      }
-
-      const { email } = result.data;
-      const database = await getDb();
-      const usersCollection = database.collection("users");
-      
-      let user = await usersCollection.findOne({ email });
-      
-      if (!user) {
-        const insertResult = await usersCollection.insertOne({ 
-          email, 
-          createdAt: new Date() 
-        });
-        user = await usersCollection.findOne({ _id: insertResult.insertedId });
-      }
-
-      const token = jwt.sign({ id: user._id.toString(), email: user.email }, JWT_SECRET, { expiresIn: '7d' });
-      res.json({ token, user: { id: user._id.toString(), email: user.email } });
-    } catch (error: any) {
-      console.error("Login error:", error.message);
-      res.status(500).json({ error: error.message || "Authentication failed" });
-    }
+    res.json({ token: "public_access", user: { id: DEFAULT_USER_ID, email: "public@example.com" } });
   });
 
-  // Protected API Endpoints
-  apiRouter.get("/tasks", authenticateToken, async (req: any, res) => {
+  // Public API Endpoints
+  apiRouter.get("/tasks", async (req, res) => {
     try {
       const database = await getDb();
       const tasksCollection = database.collection("tasks");
       const tasks = await tasksCollection
-        .find({ userId: req.user.id })
+        .find({ userId: DEFAULT_USER_ID })
         .sort({ createdAt: -1 })
         .toArray();
       
@@ -170,7 +124,7 @@ export async function createServer() {
     }
   });
 
-  apiRouter.post("/tasks", authenticateToken, async (req: any, res) => {
+  apiRouter.post("/tasks", async (req, res) => {
     try {
       const taskSchema = z.object({
         title: z.string().min(1),
@@ -188,7 +142,7 @@ export async function createServer() {
       const tasksCollection = database.collection("tasks");
       
       const task = {
-        userId: req.user.id,
+        userId: DEFAULT_USER_ID,
         title,
         status,
         endTime: endTime || null,
@@ -209,7 +163,7 @@ export async function createServer() {
     }
   });
 
-  apiRouter.patch("/tasks/:id", authenticateToken, async (req: any, res) => {
+  apiRouter.patch("/tasks/:id", async (req, res) => {
     try {
       const { id } = req.params;
       const taskSchema = z.object({
@@ -233,7 +187,7 @@ export async function createServer() {
       const tasksCollection = database.collection("tasks");
       
       const updatedDoc = await tasksCollection.findOneAndUpdate(
-        { _id: new ObjectId(id), userId: req.user.id },
+        { _id: new ObjectId(id), userId: DEFAULT_USER_ID },
         { $set: updateData },
         { returnDocument: 'after' }
       );
@@ -255,7 +209,7 @@ export async function createServer() {
     }
   });
 
-  apiRouter.delete("/tasks/:id", authenticateToken, async (req: any, res) => {
+  apiRouter.delete("/tasks/:id", async (req, res) => {
     try {
       const { id } = req.params;
       const database = await getDb();
@@ -263,7 +217,7 @@ export async function createServer() {
       
       const result = await tasksCollection.deleteOne({ 
         _id: new ObjectId(id), 
-        userId: req.user.id 
+        userId: DEFAULT_USER_ID 
       });
       
       if (result.deletedCount === 0) {
@@ -277,11 +231,11 @@ export async function createServer() {
     }
   });
 
-  apiRouter.delete("/tasks", authenticateToken, async (req: any, res) => {
+  apiRouter.delete("/tasks", async (req, res) => {
     try {
       const database = await getDb();
       const tasksCollection = database.collection("tasks");
-      await tasksCollection.deleteMany({ userId: req.user.id });
+      await tasksCollection.deleteMany({ userId: DEFAULT_USER_ID });
       res.status(204).send();
     } catch (error: any) {
       console.error("Batch delete error:", error.message);
