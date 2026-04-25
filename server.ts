@@ -1,58 +1,52 @@
 import express from "express";
 import { createServer as createViteServer } from "vite";
-import Database from "better-sqlite3";
+import { MongoClient, ObjectId } from "mongodb";
 import path from "path";
 import { fileURLToPath } from "url";
 import { z } from "zod";
 import jwt from "jsonwebtoken";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const db = new Database("tasks.db");
-db.pragma('foreign_keys = ON');
+
+// Initialize MongoDB Connection
+let client: MongoClient | null = null;
+let db: any = null;
+
+async function getDb() {
+  if (!db) {
+    const mongodbUri = process.env.MONGODB_URI;
+    
+    if (!mongodbUri || mongodbUri.includes("your_mongodb_uri") || mongodbUri.trim() === "" || mongodbUri === "base") {
+      throw new Error("MONGODB_URI is missing or misconfigured. Please provide your MongoDB Atlas connection string in Settings.");
+    }
+
+    try {
+      client = new MongoClient(mongodbUri);
+      await client.connect();
+      db = client.db("taskmanager");
+      console.log("🎨 MongoDB connected successfully.");
+    } catch (err: any) {
+      console.error("❌ MongoDB connection failed:", err.message);
+      throw err;
+    }
+  }
+  return db;
+}
+
 const JWT_SECRET = process.env.JWT_SECRET || "default_secret_dont_use_in_prod";
-
-// Initialize Database
-db.exec(`
-  CREATE TABLE IF NOT EXISTS users (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    email TEXT UNIQUE NOT NULL,
-    createdAt DATETIME DEFAULT CURRENT_TIMESTAMP
-  );
-
-  CREATE TABLE IF NOT EXISTS tasks (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    userId INTEGER NOT NULL,
-    title TEXT NOT NULL,
-    status TEXT NOT NULL DEFAULT 'pending',
-    endTime DATETIME,
-    createdAt DATETIME DEFAULT CURRENT_TIMESTAMP,
-    FOREIGN KEY (userId) REFERENCES users(id)
-  );
-`);
-
-// Support schema migration for older task tables missing userId or endTime
-try {
-  db.exec("ALTER TABLE tasks ADD COLUMN userId INTEGER REFERENCES users(id)");
-} catch (e) {}
-
-try {
-  db.exec("ALTER TABLE tasks ADD COLUMN endTime DATETIME");
-} catch (e) {}
 
 // Middleware to verify JWT
 const authenticateToken = (req: any, res: any, next: any) => {
   const authHeader = req.headers['authorization'];
   const token = authHeader && authHeader.split(' ')[1];
 
-  if (!token) return res.status(401).json({ error: "Access denied" });
+  if (!token) return res.status(401).json({ error: "Access token required" });
 
-  try {
-    const verified = jwt.verify(token, JWT_SECRET);
-    req.user = verified;
+  jwt.verify(token, JWT_SECRET, (err: any, user: any) => {
+    if (err) return res.status(403).json({ error: "Invalid or expired token" });
+    req.user = user;
     next();
-  } catch (err) {
-    res.status(403).json({ error: "Invalid token" });
-  }
+  });
 };
 
 async function startServer() {
@@ -61,48 +55,104 @@ async function startServer() {
 
   app.use(express.json());
 
-  // Auth Endpoints (Email-only)
+  // Health check
+  app.get("/api/health", async (req, res) => {
+    const mongodbUri = process.env.MONGODB_URI;
+    const isConfigured = !!mongodbUri && !mongodbUri.includes("your_mongodb_uri") && mongodbUri !== "base";
+    
+    let isConnected = false;
+    if (isConfigured) {
+      try {
+        const database = await getDb();
+        await database.command({ ping: 1 });
+        isConnected = true;
+      } catch (e) {
+        isConnected = false;
+      }
+    }
+
+    res.json({ 
+      status: "ok", 
+      db: isConfigured ? "MongoDB" : "Missing Configuration",
+      connected: isConnected,
+      configured: isConfigured
+    });
+  });
+
+  // Auth Endpoint
   app.post("/api/auth/login", async (req, res) => {
     try {
-      const userSchema = z.object({
-        email: z.string().email(),
-      });
-      const result = userSchema.safeParse(req.body);
-      if (!result.success) return res.status(400).json({ error: "Valid email is required" });
-
-      const { email } = result.data;
+      const loginSchema = z.object({ email: z.string().email() });
+      const result = loginSchema.safeParse(req.body);
       
-      // Upsert user (SQLite way)
-      let user: any = db.prepare("SELECT * FROM users WHERE email = ?").get(email);
-      
-      if (!user) {
-        const info = db.prepare("INSERT INTO users (email) VALUES (?)").run(email);
-        user = { id: info.lastInsertRowid, email };
+      if (!result.success) {
+        return res.status(400).json({ error: "Invalid email format" });
       }
 
-      const token = jwt.sign({ id: user.id, email: user.email }, JWT_SECRET, { expiresIn: '7d' });
-      res.json({ token, user: { id: user.id, email: user.email } });
-    } catch (error) {
-      res.status(500).json({ error: "Authentication failed" });
+      const { email } = result.data;
+      const database = await getDb();
+      const usersCollection = database.collection("users");
+      
+      let user = await usersCollection.findOne({ email });
+      
+      if (!user) {
+        const insertResult = await usersCollection.insertOne({ 
+          email, 
+          createdAt: new Date() 
+        });
+        user = await usersCollection.findOne({ _id: insertResult.insertedId });
+      }
+
+      const token = jwt.sign({ id: user._id.toString(), email: user.email }, JWT_SECRET, { expiresIn: '7d' });
+      res.json({ token, user: { id: user._id.toString(), email: user.email } });
+    } catch (error: any) {
+      console.error("Login error:", error.message);
+      let message = error.message || "Authentication failed";
+      
+      // Provide more helpful tips for common MongoDB errors
+      if (error.message.includes("MONGODB_URI")) {
+        message = error.message;
+      } else if (error.message.includes("ENOTFOUND") || error.message.includes("getaddrinfo")) {
+        message = "DNS Error: The hostname could not be found. Please check your MONGODB_URI.";
+      } else if (error.message.includes("SSL alert number 80") || error.message.includes("tlsv1 alert internal")) {
+        message = "Network Error (SSL 80): MongoDB Atlas rejected the connection. Please ensure 'Allow Access From Anywhere' (0.0.0.0/0) is enabled in your MongoDB Atlas Network Access settings.";
+      } else if (error.message.includes("auth failed") || error.message.includes("Authentication failed")) {
+        message = "Database login failed. Please check your MongoDB username and password.";
+      }
+
+      res.status(500).json({ error: message });
     }
   });
 
   // Protected API Endpoints
-  app.get("/api/tasks", authenticateToken, (req: any, res) => {
+  app.get("/api/tasks", authenticateToken, async (req: any, res) => {
     try {
-      const tasks = db.prepare("SELECT * FROM tasks WHERE userId = ? ORDER BY createdAt DESC").all(req.user.id);
-      res.json(tasks);
-    } catch (error) {
-      res.status(500).json({ error: "Failed to fetch tasks" });
+      const database = await getDb();
+      const tasksCollection = database.collection("tasks");
+      const tasks = await tasksCollection
+        .find({ userId: req.user.id })
+        .sort({ createdAt: -1 })
+        .toArray();
+      
+      const mappedTasks = tasks.map(t => ({
+        ...t,
+        id: t._id.toString(),
+        _id: undefined
+      }));
+      
+      res.json(mappedTasks);
+    } catch (error: any) {
+      console.error("Fetch tasks error:", error.message);
+      res.status(500).json({ error: "Failed to fetch tasks." });
     }
   });
 
-  app.post("/api/tasks", authenticateToken, (req: any, res) => {
+  app.post("/api/tasks", authenticateToken, async (req: any, res) => {
     try {
       const taskSchema = z.object({
-        title: z.string().min(1, "Title is required"),
-        status: z.enum(["pending", "completed"]).default("pending"),
-        endTime: z.string().nullable().optional(),
+        title: z.string().min(1),
+        status: z.enum(["pending", "completed"]),
+        endTime: z.string().optional().nullable(),
       });
 
       const result = taskSchema.safeParse(req.body);
@@ -111,33 +161,38 @@ async function startServer() {
       }
 
       const { title, status, endTime } = result.data;
+      const database = await getDb();
+      const tasksCollection = database.collection("tasks");
       
-      // Verify user exists before inserting to provide better error
-      const userExists = db.prepare("SELECT id FROM users WHERE id = ?").get(req.user.id);
-      if (!userExists) {
-        return res.status(403).json({ error: "User session is invalid. Please log in again." });
-      }
+      const task = {
+        userId: req.user.id,
+        title,
+        status,
+        endTime: endTime || null,
+        createdAt: new Date()
+      };
 
-      const info = db.prepare("INSERT INTO tasks (userId, title, status, endTime) VALUES (?, ?, ?, ?)").run(req.user.id, title, status, endTime || null);
+      const insertResult = await tasksCollection.insertOne(task);
+      const insertedTask = {
+        ...task,
+        id: insertResult.insertedId.toString(),
+        _id: undefined
+      };
       
-      const newTask = db.prepare("SELECT * FROM tasks WHERE id = ?").get(info.lastInsertRowid);
-      res.status(201).json(newTask);
+      res.status(201).json(insertedTask);
     } catch (error: any) {
-      console.error("Create task error:", error);
-      if (error.code === 'SQLITE_CONSTRAINT_FOREIGNKEY') {
-        return res.status(403).json({ error: "User session is invalid. Please log in again." });
-      }
+      console.error("Create task error:", error.message);
       res.status(500).json({ error: "Failed to create task" });
     }
   });
 
-  app.patch("/api/tasks/:id", authenticateToken, (req: any, res) => {
+  app.patch("/api/tasks/:id", authenticateToken, async (req: any, res) => {
     try {
       const { id } = req.params;
       const taskSchema = z.object({
         title: z.string().min(1).optional(),
         status: z.enum(["pending", "completed"]).optional(),
-        endTime: z.string().nullable().optional(),
+        endTime: z.string().optional().nullable(),
       });
 
       const result = taskSchema.safeParse(req.body);
@@ -145,65 +200,73 @@ async function startServer() {
         return res.status(400).json({ error: result.error.issues[0].message });
       }
 
+      const updateData: any = {};
       const { title, status, endTime } = result.data;
-      const updates = [];
-      const values = [];
+      if (title !== undefined) updateData.title = title;
+      if (status !== undefined) updateData.status = status;
+      if (endTime !== undefined) updateData.endTime = endTime;
 
-      if (title !== undefined) {
-        updates.push("title = ?");
-        values.push(title);
-      }
-      if (status !== undefined) {
-        updates.push("status = ?");
-        values.push(status);
-      }
-      if (endTime !== undefined) {
-        updates.push("endTime = ?");
-        values.push(endTime);
-      }
-
-      if (updates.length === 0) {
+      if (Object.keys(updateData).length === 0) {
         return res.status(400).json({ error: "No fields to update" });
       }
 
-      values.push(id);
-      values.push(req.user.id);
-      const query = `UPDATE tasks SET ${updates.join(", ")} WHERE id = ? AND userId = ?`;
-      const info = db.prepare(query).run(...values);
+      const database = await getDb();
+      const tasksCollection = database.collection("tasks");
+      
+      const updatedDoc = await tasksCollection.findOneAndUpdate(
+        { _id: new ObjectId(id), userId: req.user.id },
+        { $set: updateData },
+        { returnDocument: 'after' }
+      );
 
-      if (info.changes === 0) {
+      if (!updatedDoc) {
         return res.status(404).json({ error: "Task not found" });
       }
 
-      const updatedTask = db.prepare("SELECT * FROM tasks WHERE id = ?").get(id);
-      res.json(updatedTask);
-    } catch (error) {
+      const mappedTask = {
+        ...updatedDoc,
+        id: updatedDoc._id.toString(),
+        _id: undefined
+      };
+
+      res.json(mappedTask);
+    } catch (error: any) {
+      console.error("Update task error:", error.message);
       res.status(500).json({ error: "Failed to update task" });
     }
   });
 
-  app.delete("/api/tasks/:id", authenticateToken, (req: any, res) => {
+  app.delete("/api/tasks/:id", authenticateToken, async (req: any, res) => {
     try {
       const { id } = req.params;
-      const result = db.prepare("DELETE FROM tasks WHERE id = ? AND userId = ?").run(id, req.user.id);
+      const database = await getDb();
+      const tasksCollection = database.collection("tasks");
       
-      if (result.changes === 0) {
+      const result = await tasksCollection.deleteOne({ 
+        _id: new ObjectId(id), 
+        userId: req.user.id 
+      });
+      
+      if (result.deletedCount === 0) {
         return res.status(404).json({ error: "Task not found" });
       }
       
       res.status(204).send();
-    } catch (error) {
+    } catch (error: any) {
+      console.error("Delete task error:", error.message);
       res.status(500).json({ error: "Failed to delete task" });
     }
   });
 
-  app.delete("/api/tasks", authenticateToken, (req: any, res) => {
+  app.delete("/api/tasks", authenticateToken, async (req: any, res) => {
     try {
-      const result = db.prepare("DELETE FROM tasks WHERE userId = ?").run(req.user.id);
+      const database = await getDb();
+      const tasksCollection = database.collection("tasks");
+      await tasksCollection.deleteMany({ userId: req.user.id });
       res.status(204).send();
-    } catch (error) {
-      console.error("Batch delete error:", error);
-      res.status(500).json({ error: "Failed to delete all tasks" });
+    } catch (error: any) {
+      console.error("Batch delete error:", error.message);
+      res.status(500).json({ error: "Failed to delete tasks" });
     }
   });
 
@@ -215,15 +278,15 @@ async function startServer() {
     });
     app.use(vite.middlewares);
   } else {
-    const distPath = path.join(__dirname, "dist");
+    const distPath = path.join(process.cwd(), 'dist');
     app.use(express.static(distPath));
-    app.get("*", (req, res) => {
-      res.sendFile(path.join(distPath, "index.html"));
+    app.get('*', (req, res) => {
+      res.sendFile(path.join(distPath, 'index.html'));
     });
   }
 
   app.listen(PORT, "0.0.0.0", () => {
-    console.log(`Server running on http://0.0.0.0:${PORT}`);
+    console.log(`🚀 Server running on http://localhost:${PORT}`);
   });
 }
 

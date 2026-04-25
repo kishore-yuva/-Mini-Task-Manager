@@ -45,7 +45,7 @@ Welcome to **Mini Task Manager**, a sleek, professional workspace designed for e
 ### Tech Stack
 - **Frontend:** React 18, Vite, Tailwind CSS, Motion (framer-motion), Lucide React.
 - **Backend:** Node.js, Express.
-- **Database:** SQLite (Better-SQLite3) for persistent, lightweight storage.
+- **Database:** PostgreSQL (via `pg` pool) for robust, scalable storage.
 - **Security:** JWT (JSON Web Tokens) for session management.
 
 ### API Reference

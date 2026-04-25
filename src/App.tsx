@@ -68,14 +68,28 @@ export default function App() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [dbStatus, setDbStatus] = useState<{ status: string; db: string; configured: boolean; connected: boolean } | null>(null);
 
   useEffect(() => {
+    checkHealth();
     if (token) {
       fetchTasks();
     } else {
       setLoading(false);
     }
   }, [token]);
+
+  const checkHealth = async () => {
+    try {
+      const res = await fetch('/api/health');
+      if (res.ok) {
+        const data = await res.json();
+        setDbStatus(data);
+      }
+    } catch (err) {
+      console.warn('Health check failed');
+    }
+  };
 
   const fetchTasks = async () => {
     setLoading(true);
@@ -317,9 +331,22 @@ export default function App() {
             </div>
 
             {error && (
-              <div className="p-3 bg-red-500/10 border border-red-500/20 rounded-xl text-red-500 text-xs flex items-center gap-2">
-                <AlertCircle className="w-4 h-4" />
-                {error}
+              <div className="space-y-3">
+                <div className="p-3 bg-red-500/10 border border-red-500/20 rounded-xl text-red-500 text-xs flex items-center gap-2">
+                  <AlertCircle className="w-4 h-4" />
+                  {error}
+                </div>
+                {dbStatus && !dbStatus.configured ? (
+                  <div className="p-4 bg-indigo-500/10 border border-indigo-500/20 rounded-xl text-indigo-200 text-[10px] leading-relaxed">
+                    <p className="font-bold mb-1 uppercase tracking-wider text-indigo-500">Database Setup Required:</p>
+                    <ol className="list-decimal list-inside space-y-1">
+                      <li>Open <strong>Settings</strong> (gear icon)</li>
+                      <li>Go to <strong>Environment Variables</strong></li>
+                      <li>Add your MongoDB <code>MONGODB_URI</code></li>
+                      <li>The app will automatically connect once configured</li>
+                    </ol>
+                  </div>
+                ) : null}
               </div>
             )}
 
@@ -330,6 +357,15 @@ export default function App() {
               {isSubmitting ? <Loader2 className="w-5 h-5 animate-spin mx-auto" /> : 'Get Started'}
             </button>
           </form>
+
+          {dbStatus && (
+            <div className="mt-8 flex justify-center">
+              <div className={`px-2 py-1 rounded-full text-[9px] font-bold uppercase tracking-widest flex items-center gap-1.5 ${dbStatus.connected ? 'bg-emerald-500/10 text-emerald-500 border border-emerald-500/20' : 'bg-amber-500/10 text-amber-500 border border-amber-500/20'}`}>
+                <div className={`w-1 h-1 rounded-full animate-pulse ${dbStatus.connected ? 'bg-emerald-500' : 'bg-amber-500'}`} />
+                System Status: {dbStatus.db} {dbStatus.connected ? '(Connected)' : '(Offline)'}
+              </div>
+            </div>
+          )}
         </motion.div>
       </div>
     );
