@@ -384,6 +384,15 @@ export default function App() {
           </div>
           <div className="flex items-center gap-4">
             <div className="bg-zinc-900 border border-zinc-800 px-4 py-2 rounded-full flex items-center gap-4 shadow-sm">
+              {dbStatus && (
+                <>
+                  <span className={`hidden sm:flex items-center gap-2 text-xs font-bold uppercase tracking-wider ${dbStatus.db === 'MongoDB' ? 'text-emerald-400' : 'text-amber-400'}`}>
+                    <Database className={`w-3.5 h-3.5 ${dbStatus.db === 'MongoDB' ? 'text-emerald-500' : 'text-amber-500'}`} />
+                    {dbStatus.db}
+                  </span>
+                  <div className="h-4 w-[1px] bg-zinc-800 hidden sm:block"></div>
+                </>
+              )}
               <span className="flex items-center gap-2 text-sm text-zinc-400">
                 <span className={`w-2 h-2 rounded-full bg-emerald-500 ${loading ? 'animate-pulse' : ''}`}></span>
                 API Status: {loading ? 'Checking...' : 'Online'}
