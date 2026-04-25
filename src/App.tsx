@@ -5,8 +5,9 @@
 
 import { useState, useEffect, useRef } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { Plus, Trash2, CheckCircle2, Circle, Loader2, AlertCircle, LayoutGrid, Clock, Database, Check, LogOut, Mail, Lock, UserPlus, HelpCircle, X, Download, FileText, Printer } from 'lucide-react';
+import { Plus, Trash2, CheckCircle2, Circle, Loader2, AlertCircle, LayoutGrid, Clock, Database, Check, LogOut, Mail, Lock, UserPlus, HelpCircle, X, Download, FileText, Printer, MessageSquare, ArrowLeft, Send } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
+import { ContactDeveloper } from './components/ContactDeveloper';
 
 const USER_MANUAL_CONTENT = `
 # Mini Task Manager - User Manual
@@ -14,26 +15,25 @@ const USER_MANUAL_CONTENT = `
 Welcome to **Mini Task Manager**, a sleek, professional workspace designed for efficient task tracking and productivity.
 
 ## 🚀 Getting Started
-Direct and instant access. No account creation or login required. Just start managing your tasks immediately in this unified workspace.
+Enter your email to sign in via passwordless authentication. This creates a secure, private workspace just for you.
 
 ## 📋 Managing Tasks
-
 ### Creating a Task
-Use the **"New Task"** panel. Enter a title, pick a status, and you're good to go.
+Use the **"New Task"** panel. Enter a title, pick a status, and optional due date.
 
 ### Searching & Filtering
-The **Search Bar** in the Active Tasks panel allows you to find tasks by keyword instantly.
+Use the search bar in the Active Tasks panel to find tasks instantly by title.
 
 ### Editing Tasks
 Click a task title to enter **Edit Mode**. Press **Enter** to save or **Escape** to cancel. 
 
 ### Completion & Deletion
-- Click icons to toggle status.
-- Individual delete via the trash icon on hover.
+- Toggle status by clicking the checkbox.
+- Individual delete via the trash icon.
 - **Clear All** for bulk removal (requires double-click confirmation).
 
-## 📊 Productivity Tracking
-The circular health bar reflects your completion percentage. Aim for 100%!
+## 🔒 Security
+Your data is private and tied to your email. We use secure tokens to ensure only you can access your tasks.
 `;
 
 interface Task {
@@ -58,6 +58,7 @@ export default function App() {
     ? (rawApiUrl.endsWith('/') ? rawApiUrl.slice(0, -1) : rawApiUrl)
     : '';
   
+  const [view, setView] = useState<'dashboard' | 'contact'>('dashboard');
   const [tasks, setTasks] = useState<Task[]>([]);
   const [user, setUser] = useState<User | null>(null);
   const [token, setToken] = useState<string | null>(localStorage.getItem('token'));
@@ -100,13 +101,28 @@ export default function App() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ email })
       });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || 'Login failed');
       
-      setToken(data.token);
-      setUser(data.user);
-      localStorage.setItem('token', data.token);
-      localStorage.setItem('user', JSON.stringify(data.user));
+      const contentType = res.headers.get("content-type");
+      if (contentType && contentType.includes("application/json")) {
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || 'Login failed');
+        
+        setToken(data.token);
+        setUser(data.user);
+        localStorage.setItem('token', data.token);
+        localStorage.setItem('user', JSON.stringify(data.user));
+      } else {
+        // Handle non-JSON response (likely an error page or infrastructure issue)
+        const text = await res.text();
+        console.error("Non-JSON response from server:", text);
+        if (res.status === 404) {
+          throw new Error("Login endpoint not found (404). Please check server logs.");
+        } else if (res.status >= 500) {
+          throw new Error(`Server error (${res.status}). Please check server logs.`);
+        } else {
+          throw new Error(`Unexpected response from server: ${text.slice(0, 50)}...`);
+        }
+      }
     } catch (err: any) {
       setError(err.message);
     } finally {
@@ -145,6 +161,11 @@ export default function App() {
       const res = await fetch(requestUrl, {
         headers: { 'Authorization': `Bearer ${token}` }
       });
+      
+      if (res.status === 401 || res.status === 403) {
+        handleLogout();
+        return;
+      }
       
       const contentType = res.headers.get("content-type");
       if (!contentType || !contentType.includes("application/json")) {
@@ -187,6 +208,11 @@ export default function App() {
         }),
       });
       
+      if (res.status === 401 || res.status === 403) {
+        handleLogout();
+        return;
+      }
+      
       const contentType = res.headers.get("content-type");
       if (!contentType || !contentType.includes("application/json")) {
         const text = await res.text();
@@ -196,8 +222,7 @@ export default function App() {
 
       const data = await res.json();
       if (!res.ok) {
-        console.warn('Save failed:', data.error);
-        return;
+        throw new Error(data.error || 'Failed to save task');
       }
 
       setTasks([data, ...tasks]);
@@ -206,6 +231,7 @@ export default function App() {
       setNewEndTime('');
     } catch (err: any) {
       console.warn('Network error on save:', err.message);
+      setError(err.message);
     } finally {
       setIsSubmitting(false);
     }
@@ -222,6 +248,11 @@ export default function App() {
         },
         body: JSON.stringify({ status: newStatus }),
       });
+      
+      if (res.status === 401 || res.status === 403) {
+        handleLogout();
+        return;
+      }
       
       const contentType = res.headers.get("content-type");
       if (!contentType || !contentType.includes("application/json")) {
@@ -257,6 +288,11 @@ export default function App() {
         }),
       });
 
+      if (res.status === 401 || res.status === 403) {
+        handleLogout();
+        return;
+      }
+
       const contentType = res.headers.get("content-type");
       if (!contentType || !contentType.includes("application/json")) {
         throw new Error('Invalid response from server.');
@@ -278,6 +314,11 @@ export default function App() {
         headers: { 'Authorization': `Bearer ${token}` }
       });
 
+      if (res.status === 401 || res.status === 403) {
+        handleLogout();
+        return;
+      }
+
       if (!res.ok) throw new Error('Failed to delete task');
       setTasks(tasks.filter(t => t.id !== id));
     } catch (err) {
@@ -297,6 +338,11 @@ export default function App() {
         headers: { 'Authorization': `Bearer ${token}` }
       });
       
+      if (res.status === 401 || res.status === 403) {
+        handleLogout();
+        return;
+      }
+
       if (!res.ok) throw new Error('Failed to delete all tasks');
       setTasks([]);
       setIsConfirmingDeleteAll(false);
@@ -547,6 +593,14 @@ export default function App() {
                 <span className="text-xs text-indigo-400 font-bold truncate max-w-[120px]">{user?.email}</span>
               </div>
               <button 
+                onClick={() => setView('contact')}
+                className={`flex items-center gap-2 px-4 py-2 rounded-xl transition-all border ${view === 'contact' ? 'bg-indigo-600/10 border-indigo-500/50 text-indigo-400' : 'border-zinc-800 text-zinc-400 hover:text-white hover:border-zinc-700 hover:bg-zinc-900'}`}
+                title="Contact Developer"
+              >
+                <MessageSquare className="w-4 h-4" />
+                <span className="text-sm font-semibold">Contact Developer</span>
+              </button>
+              <button 
                 onClick={handleLogout}
                 className="p-2 text-zinc-500 hover:text-red-400 transition-colors"
                 title="Logout"
@@ -564,9 +618,18 @@ export default function App() {
           </div>
         </header>
 
-        {/* Main Grid */}
-        <div className="grid grid-cols-1 md:grid-cols-12 md:grid-rows-6 gap-6 flex-grow pb-8">
-          {/* Active Tasks Panel */}
+        {/* Content Views */}
+        <AnimatePresence mode="wait">
+          {view === 'dashboard' ? (
+            <motion.div 
+              key="dashboard"
+              initial={{ opacity: 0, y: 10 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -10 }}
+              transition={{ duration: 0.2 }}
+              className="grid grid-cols-1 md:grid-cols-12 md:grid-rows-6 gap-6 flex-grow pb-8"
+            >
+              {/* Active Tasks Panel */}
           <div className="md:col-span-8 md:row-span-6 bg-zinc-900/50 border border-zinc-800 rounded-3xl p-6 flex flex-col overflow-hidden text-zinc-100">
             <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center mb-6 gap-4">
               <h2 className="text-lg font-semibold flex items-center gap-2">
@@ -856,7 +919,15 @@ export default function App() {
               <span>Finished</span>
             </div>
           </motion.div>
-        </div>
+            </motion.div>
+          ) : (
+            <ContactDeveloper 
+              key="contact"
+              onBack={() => setView('dashboard')} 
+              userEmail={user?.email} 
+            />
+          )}
+        </AnimatePresence>
       </div>
     </div>
   );

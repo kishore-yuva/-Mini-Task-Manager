@@ -171,8 +171,6 @@ async function getAdapter(): Promise<DbAdapter> {
   return activeAdapter;
 }
 
-const DEFAULT_USER_ID = "public_user";
-
 // Authentication Middleware
 function authenticateToken(req: any, res: any, next: any) {
   const authHeader = req.headers['authorization'];
@@ -213,9 +211,11 @@ export async function createServer() {
 
   // Auth Endpoint (Passwordless Email Login)
   apiRouter.post("/auth/login", async (req, res) => {
+    console.log(`[API] Login attempt for email: ${req.body?.email}`);
     try {
       const { email } = req.body;
       if (!email || !email.includes("@")) {
+        console.warn(`[API] Invalid email provided: ${email}`);
         return res.status(400).json({ error: "Valid email is required" });
       }
 
@@ -225,6 +225,7 @@ export async function createServer() {
       if (adapter.isMongo && mongoDb) {
         user = await mongoDb.collection("users").findOne({ email });
         if (!user) {
+          console.log(`[API] Creating new mongo user for: ${email}`);
           const result = await mongoDb.collection("users").insertOne({
             email,
             createdAt: new Date()
@@ -232,17 +233,18 @@ export async function createServer() {
           user = { _id: result.insertedId, email };
         }
       } else {
-        // Simple fallback for local/in-memory
+        console.log(`[API] Using local/fallback user for: ${email}`);
         user = { _id: "local_user_" + email, email };
       }
 
       const userId = user._id.toString();
       const token = jwt.sign({ id: userId, email: user.email }, JWT_SECRET, { expiresIn: '7d' });
 
+      console.log(`[API] Login successful for: ${email}`);
       res.json({ token, user: { id: userId, email: user.email } });
     } catch (error: any) {
-      console.error("Login error:", error);
-      res.status(500).json({ error: "Authentication failed" });
+      console.error("💥 Login error:", error);
+      res.status(500).json({ error: "Authentication failed", details: error.message });
     }
   });
 
@@ -339,6 +341,12 @@ export async function createServer() {
     } catch (error: any) {
       res.status(500).json({ error: "Failed to delete tasks" });
     }
+  });
+
+  // 404 for API
+  apiRouter.use((req, res) => {
+    console.warn(`[API] 404 - Not Found: ${req.method} ${req.originalUrl}`);
+    res.status(404).json({ error: "API route not found" });
   });
 
   // Global Error Handler
