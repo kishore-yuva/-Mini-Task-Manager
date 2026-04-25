@@ -5,6 +5,10 @@ import path from "path";
 import { fileURLToPath } from "url";
 import { z } from "zod";
 import jwt from "jsonwebtoken";
+import cors from "cors";
+import dotenv from "dotenv";
+
+dotenv.config();
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -40,25 +44,45 @@ const authenticateToken = (req: any, res: any, next: any) => {
   const authHeader = req.headers['authorization'];
   const token = authHeader && authHeader.split(' ')[1];
 
-  if (!token) return res.status(401).json({ error: "Access token required" });
+  console.log(`[AUTH] Checking token for ${req.url}`);
+
+  if (!token) {
+    console.warn(`[AUTH] No token provided for ${req.url}`);
+    return res.status(401).json({ error: "Access token required" });
+  }
 
   jwt.verify(token, JWT_SECRET, (err: any, user: any) => {
-    if (err) return res.status(403).json({ error: "Invalid or expired token" });
+    if (err) {
+      console.warn(`[AUTH] Token verification failed: ${err.message}`);
+      return res.status(403).json({ error: "Invalid or expired token" });
+    }
     req.user = user;
     next();
   });
 };
 
-async function startServer() {
+export async function createServer() {
   const app = express();
-  const PORT = 3000;
-
+  app.use(cors());
   app.use(express.json());
+  app.use(express.urlencoded({ extended: true }));
+  
+  // Robust request logging
+  app.use((req: express.Request, res: express.Response, next: express.NextFunction) => {
+    console.log(`[REQ] ${req.method} ${req.originalUrl} -> ${req.url}`);
+    next();
+  });
 
+  const apiRouter = express.Router();
+  
+  // IMMEDIATELY mount API router to ensure it catches requests first
+  app.use("/api", apiRouter);
+  
   // Health check
-  app.get("/api/health", async (req, res) => {
+  apiRouter.get("/health", async (req, res) => {
+    console.log(`[API] Health check within apiRouter: ${req.method} ${req.url}`);
     const mongodbUri = process.env.MONGODB_URI;
-    const isConfigured = !!mongodbUri && !mongodbUri.includes("your_mongodb_uri") && mongodbUri !== "base";
+    const isConfigured = !!mongodbUri && !mongodbUri.includes("your_mongodb_uri") && mongodbUri !== "base" && mongodbUri.trim() !== "";
     
     let isConnected = false;
     if (isConfigured) {
@@ -75,12 +99,13 @@ async function startServer() {
       status: "ok", 
       db: isConfigured ? "MongoDB" : "Missing Configuration",
       connected: isConnected,
-      configured: isConfigured
+      configured: isConfigured,
+      timestamp: new Date().toISOString()
     });
   });
 
   // Auth Endpoint
-  app.post("/api/auth/login", async (req, res) => {
+  apiRouter.post("/auth/login", async (req, res) => {
     try {
       const loginSchema = z.object({ email: z.string().email() });
       const result = loginSchema.safeParse(req.body);
@@ -107,25 +132,12 @@ async function startServer() {
       res.json({ token, user: { id: user._id.toString(), email: user.email } });
     } catch (error: any) {
       console.error("Login error:", error.message);
-      let message = error.message || "Authentication failed";
-      
-      // Provide more helpful tips for common MongoDB errors
-      if (error.message.includes("MONGODB_URI")) {
-        message = error.message;
-      } else if (error.message.includes("ENOTFOUND") || error.message.includes("getaddrinfo")) {
-        message = "DNS Error: The hostname could not be found. Please check your MONGODB_URI.";
-      } else if (error.message.includes("SSL alert number 80") || error.message.includes("tlsv1 alert internal")) {
-        message = "Network Error (SSL 80): MongoDB Atlas rejected the connection. Please ensure 'Allow Access From Anywhere' (0.0.0.0/0) is enabled in your MongoDB Atlas Network Access settings.";
-      } else if (error.message.includes("auth failed") || error.message.includes("Authentication failed")) {
-        message = "Database login failed. Please check your MongoDB username and password.";
-      }
-
-      res.status(500).json({ error: message });
+      res.status(500).json({ error: error.message || "Authentication failed" });
     }
   });
 
   // Protected API Endpoints
-  app.get("/api/tasks", authenticateToken, async (req: any, res) => {
+  apiRouter.get("/tasks", authenticateToken, async (req: any, res) => {
     try {
       const database = await getDb();
       const tasksCollection = database.collection("tasks");
@@ -147,7 +159,7 @@ async function startServer() {
     }
   });
 
-  app.post("/api/tasks", authenticateToken, async (req: any, res) => {
+  apiRouter.post("/tasks", authenticateToken, async (req: any, res) => {
     try {
       const taskSchema = z.object({
         title: z.string().min(1),
@@ -186,7 +198,7 @@ async function startServer() {
     }
   });
 
-  app.patch("/api/tasks/:id", authenticateToken, async (req: any, res) => {
+  apiRouter.patch("/tasks/:id", authenticateToken, async (req: any, res) => {
     try {
       const { id } = req.params;
       const taskSchema = z.object({
@@ -205,10 +217,6 @@ async function startServer() {
       if (title !== undefined) updateData.title = title;
       if (status !== undefined) updateData.status = status;
       if (endTime !== undefined) updateData.endTime = endTime;
-
-      if (Object.keys(updateData).length === 0) {
-        return res.status(400).json({ error: "No fields to update" });
-      }
 
       const database = await getDb();
       const tasksCollection = database.collection("tasks");
@@ -236,7 +244,7 @@ async function startServer() {
     }
   });
 
-  app.delete("/api/tasks/:id", authenticateToken, async (req: any, res) => {
+  apiRouter.delete("/tasks/:id", authenticateToken, async (req: any, res) => {
     try {
       const { id } = req.params;
       const database = await getDb();
@@ -258,7 +266,7 @@ async function startServer() {
     }
   });
 
-  app.delete("/api/tasks", authenticateToken, async (req: any, res) => {
+  apiRouter.delete("/tasks", authenticateToken, async (req: any, res) => {
     try {
       const database = await getDb();
       const tasksCollection = database.collection("tasks");
@@ -270,14 +278,42 @@ async function startServer() {
     }
   });
 
+  // Test endpoint
+  apiRouter.post("/test", (req, res) => {
+    console.log("[API] Test POST received:", req.body);
+    res.json({ message: "Test successful", body: req.body });
+  });
+
+  // API Fallback for unmatched /api routes
+  apiRouter.all("*", (req, res) => {
+    console.warn(`[API 404] Route not found in apiRouter: ${req.method} ${req.url}`);
+    res.status(404).json({
+      error: "Route not found",
+      method: req.method,
+      path: req.path
+    });
+  });
+
+  // Global Error Handler
+  app.use((err: any, req: express.Request, res: express.Response, next: express.NextFunction) => {
+    console.error("💥 Unhandled API Error:", err);
+    const status = err.status || 500;
+    res.status(status).json({ 
+      error: status === 404 ? "Not Found" : "Internal Server Error", 
+      message: err.message || "An unexpected error occurred"
+    });
+  });
+
   // Vite middleware for development
   if (process.env.NODE_ENV !== "production") {
+    console.log("🛠️  Starting Vite in middleware mode...");
     const vite = await createViteServer({
       server: { middlewareMode: true },
       appType: "spa",
     });
     app.use(vite.middlewares);
   } else {
+    console.log("📦 Serving production static files...");
     const distPath = path.join(process.cwd(), 'dist');
     app.use(express.static(distPath));
     app.get('*', (req, res) => {
@@ -285,9 +321,16 @@ async function startServer() {
     });
   }
 
-  app.listen(PORT, "0.0.0.0", () => {
-    console.log(`🚀 Server running on http://localhost:${PORT}`);
-  });
+  return app;
 }
 
-startServer();
+// Start the server
+createServer().then(app => {
+  const PORT = 3000;
+  app.listen(PORT, "0.0.0.0", () => {
+    console.log(`🚀 Server running on http://localhost:${PORT} (Env: ${process.env.NODE_ENV || 'development'})`);
+  });
+}).catch(err => {
+  console.error("❌ Failed to start server:", err);
+  process.exit(1);
+});

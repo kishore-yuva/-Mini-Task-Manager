@@ -18,15 +18,19 @@ This guide helps you set up and deploy the Mini Task Manager with MongoDB.
 3. **Configure Build Settings**:
    - Build Command: `npm run build`
    - Publish directory: `dist`
-4. **Set Environment Variables** in Netlify (Site Settings -> Environment Variables):
+4. **Set Environment Variables** in Netlify:
    - `MONGODB_URI`: Your Atlas connection string.
    - `JWT_SECRET`: A long random string.
    - `VITE_APP_NAME`: Your custom app name.
-5. **Functions (Backend)**:
-   - Note: To run the Express backend on Netlify, you may need to migrate `server.ts` to Netlify Functions or deploy the backend to a platform like Render/Railrail while keeping the frontend on Netlify.
+   - `VITE_API_URL`: (Optional) The URL of your backend if deployed elsewhere.
 
-1. Open the **Settings** menu (gear icon).
-2. Go to **Environment Variables**.
+### ⚠️ Common Error: "Unexpected token '<'..."
+If you see this error, it means your Netlify frontend is trying to call an API that doesn't exist on Netlify (because Netlify is for static sites). To fix this:
+- **Option A**: Use a backend host like **Render** or **Railway** for the Express server and set `VITE_API_URL` to that URL.
+- **Option B**: Convert `server.ts` to a Netlify Function (requires more setup).
+- **Option C**: Simply deploy to a platform like **Render** or **Railway** which handles both frontend AND the Express server automatically.
+
+## 🛠️ Configuration in AI Studio
 3. Add a new variable:
    - Key: `MONGODB_URI`
    - Value: `your_mongodb_connection_string`

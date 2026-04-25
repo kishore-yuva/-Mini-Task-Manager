@@ -37,8 +37,8 @@ The circular health bar reflects your completion percentage. Aim for 100%!
 `;
 
 interface Task {
-  id: number;
-  userId: number;
+  id: string;
+  userId: string;
   title: string;
   status: 'pending' | 'completed';
   endTime: string | null;
@@ -46,12 +46,17 @@ interface Task {
 }
 
 interface User {
-  id: number;
+  id: string;
   email: string;
 }
 
 export default function App() {
-  const appName = import.meta.env.VITE_APP_NAME || 'Mini Task Manager';
+  const appName = 'Mini Task Manager';
+  const rawApiUrl = import.meta.env.VITE_API_URL || '';
+  // Fix: If the API URL is a placeholder like "123" or doesn't look like a URL/absolute path, ignore it.
+  const apiUrl = (rawApiUrl.startsWith('http') || rawApiUrl.startsWith('/')) 
+    ? (rawApiUrl.endsWith('/') ? rawApiUrl.slice(0, -1) : rawApiUrl)
+    : '';
   const [user, setUser] = useState<User | null>(null);
   const [token, setToken] = useState<string | null>(localStorage.getItem('token'));
   const [email, setEmail] = useState('');
@@ -61,7 +66,7 @@ export default function App() {
   const [newTitle, setNewTitle] = useState('');
   const [newStatus, setNewStatus] = useState<'pending' | 'completed'>('pending');
   const [newEndTime, setNewEndTime] = useState<string>('');
-  const [editingId, setEditingId] = useState<number | null>(null);
+  const [editingId, setEditingId] = useState<string | null>(null);
   const [editTitle, setEditTitle] = useState('');
   const [editEndTime, setEditEndTime] = useState<string>('');
   const [isConfirmingDeleteAll, setIsConfirmingDeleteAll] = useState(false);
@@ -82,10 +87,13 @@ export default function App() {
 
   const checkHealth = async () => {
     try {
-      const res = await fetch('/api/health');
+      const res = await fetch(`${apiUrl}/api/health`);
       if (res.ok) {
-        const data = await res.json();
-        setDbStatus(data);
+        const contentType = res.headers.get("content-type");
+        if (contentType && contentType.includes("application/json")) {
+          const data = await res.json();
+          setDbStatus(data);
+        }
       }
     } catch (err) {
       console.warn('Health check failed');
@@ -94,19 +102,29 @@ export default function App() {
 
   const fetchTasks = async () => {
     setLoading(true);
+    const requestUrl = `${apiUrl}/api/tasks`;
     try {
-      const res = await fetch('/api/tasks', {
+      const res = await fetch(requestUrl, {
         headers: { 'Authorization': `Bearer ${token}` }
       });
-      if (res.status === 401 || res.status === 403) {
-        logout();
-        return;
+      
+      const contentType = res.headers.get("content-type");
+      if (!contentType || !contentType.includes("application/json")) {
+        const text = await res.text();
+        console.error('Non-JSON response details:', {
+          url: requestUrl,
+          status: res.status,
+          contentType,
+          bodySnippet: text.substring(0, 200)
+        });
+        throw new Error(`API error: Expected JSON but received ${contentType || 'text/html'} from ${requestUrl}. (Status: ${res.status})`);
       }
-      if (!res.ok) throw new Error('Failed to fetch tasks');
+      
       const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Failed to fetch tasks');
       setTasks(data);
-    } catch (err) {
-      setError('Could not load tasks.');
+    } catch (err: any) {
+      setError(err.message || 'Could not load tasks.');
     } finally {
       setLoading(false);
     }
@@ -116,7 +134,7 @@ export default function App() {
     e.preventDefault();
     setIsSubmitting(true);
     setError(null);
-    const endpoint = '/api/auth/login';
+    const endpoint = `${apiUrl}/api/auth/login`;
     
     try {
       const res = await fetch(endpoint, {
@@ -124,6 +142,14 @@ export default function App() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ email }),
       });
+      
+      const contentType = res.headers.get("content-type");
+      if (!contentType || !contentType.includes("application/json")) {
+        const text = await res.text();
+        console.error('Auth response Error:', { url: endpoint, status: res.status, body: text.substring(0, 50) });
+        throw new Error(`Auth Error: Expected JSON but received ${contentType || 'text/html'}. (Status: ${res.status})`);
+      }
+
       const data = await res.json();
       
       if (!res.ok) throw new Error(data.error || 'Authentication failed');
@@ -151,8 +177,9 @@ export default function App() {
 
     setIsSubmitting(true);
     setError(null);
+    const requestUrl = `${apiUrl}/api/tasks`;
     try {
-      const res = await fetch('/api/tasks', {
+      const res = await fetch(requestUrl, {
         method: 'POST',
         headers: { 
           'Content-Type': 'application/json',
@@ -170,13 +197,19 @@ export default function App() {
         return;
       }
       
+      const contentType = res.headers.get("content-type");
+      if (!contentType || !contentType.includes("application/json")) {
+        const text = await res.text();
+        console.error('Task response Error:', { url: requestUrl, status: res.status, body: text.substring(0, 50) });
+        throw new Error(`Task Error: Expected JSON but received ${contentType || 'text/html'} from ${requestUrl}. (Status: ${res.status})`);
+      }
+
+      const data = await res.json();
       if (!res.ok) {
-        const data = await res.json();
         throw new Error(data.error || 'Failed to add task');
       }
 
-      const newTask = await res.json();
-      setTasks([newTask, ...tasks]);
+      setTasks([data, ...tasks]);
       setNewTitle('');
       setNewStatus('pending');
       setNewEndTime('');
@@ -190,7 +223,7 @@ export default function App() {
   const toggleTaskStatus = async (task: Task) => {
     const newStatus = task.status === 'completed' ? 'pending' : 'completed';
     try {
-      const res = await fetch(`/api/tasks/${task.id}`, {
+      const res = await fetch(`${apiUrl}/api/tasks/${task.id}`, {
         method: 'PATCH',
         headers: { 
           'Content-Type': 'application/json',
@@ -202,11 +235,17 @@ export default function App() {
         logout();
         return;
       }
-      if (!res.ok) throw new Error('Failed to update status');
+      
+      const contentType = res.headers.get("content-type");
+      if (!contentType || !contentType.includes("application/json")) {
+        throw new Error('Invalid response from server.');
+      }
+
       const updatedTask = await res.json();
+      if (!res.ok) throw new Error('Failed to update status');
       setTasks(tasks.map(t => t.id === task.id ? updatedTask : t));
-    } catch (err) {
-      setError('Failed to update task status.');
+    } catch (err: any) {
+      setError(err.message || 'Failed to update task status.');
     }
   };
 
@@ -216,10 +255,10 @@ export default function App() {
     setEditEndTime(task.endTime || '');
   };
 
-  const saveEdit = async (id: number) => {
+  const saveEdit = async (id: string) => {
     if (!editTitle.trim()) return setEditingId(null);
     try {
-      const res = await fetch(`/api/tasks/${id}`, {
+      const res = await fetch(`${apiUrl}/api/tasks/${id}`, {
         method: 'PATCH',
         headers: { 
           'Content-Type': 'application/json',
@@ -234,18 +273,24 @@ export default function App() {
         logout();
         return;
       }
-      if (!res.ok) throw new Error('Failed to update title');
+
+      const contentType = res.headers.get("content-type");
+      if (!contentType || !contentType.includes("application/json")) {
+        throw new Error('Invalid response from server.');
+      }
+
       const updatedTask = await res.json();
+      if (!res.ok) throw new Error('Failed to update title');
       setTasks(tasks.map(t => t.id === id ? updatedTask : t));
       setEditingId(null);
-    } catch (err) {
-      setError('Failed to save task edit.');
+    } catch (err: any) {
+      setError(err.message || 'Failed to save task edit.');
     }
   };
 
-  const deleteTask = async (id: number) => {
+  const deleteTask = async (id: string) => {
     try {
-      const res = await fetch(`/api/tasks/${id}`, { 
+      const res = await fetch(`${apiUrl}/api/tasks/${id}`, { 
         method: 'DELETE',
         headers: { 'Authorization': `Bearer ${token}` }
       });
@@ -268,7 +313,7 @@ export default function App() {
     }
     
     try {
-      const res = await fetch('/api/tasks', { 
+      const res = await fetch(`${apiUrl}/api/tasks`, { 
         method: 'DELETE',
         headers: { 'Authorization': `Bearer ${token}` }
       });
