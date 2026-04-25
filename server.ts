@@ -29,8 +29,8 @@ async function getDb() {
     if (!client) {
       console.log("🔋 Initializing new MongoDB client...");
       client = new MongoClient(mongodbUri, {
-        connectTimeoutMS: 10000,
-        serverSelectionTimeoutMS: 10000,
+        connectTimeoutMS: 8000,
+        serverSelectionTimeoutMS: 8000,
       });
       await client.connect();
     } else {

@@ -108,7 +108,12 @@ export default function App() {
           contentType,
           bodySnippet: text.substring(0, 200)
         });
-        throw new Error(`API error: Expected JSON but received ${contentType || 'text/html'} from ${requestUrl}. (Status: ${res.status})`);
+        
+        let message = `API error: Received ${contentType || 'text/html'} from ${requestUrl}. (Status: ${res.status})`;
+        if (res.status === 502) {
+          message = "502 Bad Gateway: Backend timeout. Ensure MongoDB Atlas allows all IPs (0.0.0.0/0) and MONGODB_URI is correct.";
+        }
+        throw new Error(message);
       }
       
       const data = await res.json();
@@ -145,7 +150,12 @@ export default function App() {
       if (!contentType || !contentType.includes("application/json")) {
         const text = await res.text();
         console.error('Task response Error:', { url: requestUrl, status: res.status, body: text.substring(0, 50) });
-        throw new Error(`Task Error: Expected JSON but received ${contentType || 'text/html'} from ${requestUrl}. (Status: ${res.status})`);
+        
+        let message = `Task Error: Expected JSON but received ${contentType || 'text/html'} from ${requestUrl}. (Status: ${res.status})`;
+        if (res.status === 502) {
+          message = "502 Bad Gateway: The backend function crashed or timed out. Possible causes: 1. MongoDB Atlas IP Whitelist is not 0.0.0.0/0. 2. Incorrect MONGODB_URI. 3. Connection timeout.";
+        }
+        throw new Error(message);
       }
 
       const data = await res.json();
