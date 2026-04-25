@@ -29,10 +29,13 @@ async function getDb() {
     if (!client) {
       console.log("🔋 Initializing new MongoDB client...");
       client = new MongoClient(mongodbUri, {
-        connectTimeoutMS: 8000,
-        serverSelectionTimeoutMS: 8000,
+        connectTimeoutMS: 5000, // Fail faster so we can return a 500 instead of timing out (502)
+        serverSelectionTimeoutMS: 5000,
+        socketTimeoutMS: 30000,
       });
+      console.log("⏳ Connecting to MongoDB...");
       await client.connect();
+      console.log("✅ MongoDB connected.");
     } else {
       console.log("♻️  Reusing existing MongoDB client.");
     }
