@@ -46,6 +46,18 @@ let activeAdapter: DbAdapter | null = null;
 let mongoFailedPermanently = false;
 let inMemoryTasks: any[] = [];
 
+// Helper to safely convert to ObjectId
+function safeObjectId(id: string): ObjectId | null {
+  if (!id || id.length !== 24 || !/^[0-9a-fA-F]{24}$/.test(id)) {
+    return null;
+  }
+  try {
+    return new ObjectId(id);
+  } catch (e) {
+    return null;
+  }
+}
+
 async function getAdapter(): Promise<DbAdapter> {
   if (activeAdapter) return activeAdapter;
 
@@ -72,15 +84,19 @@ async function getAdapter(): Promise<DbAdapter> {
           return { ...task, id: res.insertedId.toString() };
         },
         updateTask: async (id, userId, update) => {
+          const oid = safeObjectId(id);
+          if (!oid) return null;
           const res = await mongoDb.collection("tasks").findOneAndUpdate(
-            { _id: new ObjectId(id), userId },
+            { _id: oid, userId },
             { $set: update },
             { returnDocument: 'after' }
           );
           return res ? { ...res, id: res._id.toString() } : null;
         },
         deleteTask: async (id, userId) => {
-          const res = await mongoDb.collection("tasks").deleteOne({ _id: new ObjectId(id), userId });
+          const oid = safeObjectId(id);
+          if (!oid) return false;
+          const res = await mongoDb.collection("tasks").deleteOne({ _id: oid, userId });
           return res.deletedCount > 0;
         },
         clearTasks: async (userId) => {
@@ -188,12 +204,22 @@ export async function createServer() {
   // Public API Endpoints
   apiRouter.get("/tasks", async (req, res) => {
     try {
+      console.log(`[API] GET /tasks started...`);
       const adapter = await getAdapter();
+      console.log(`[API] Using adapter isMongo=${adapter.isMongo}`);
       const tasks = await adapter.getTasks(DEFAULT_USER_ID);
-      res.json(tasks.map(t => ({ ...t, id: t.id ? t.id.toString() : t._id.toString() })));
+      const mapped = tasks.map(t => {
+        const id = t.id || (t._id ? t._id.toString() : null);
+        return { ...t, id: id || 'temp-id', _id: undefined };
+      });
+      res.json(mapped);
     } catch (error: any) {
-      console.error("Fetch tasks error:", error.message);
-      res.status(500).json({ error: "Failed to fetch tasks." });
+      console.error("Fetch tasks error:", error);
+      res.status(500).json({ 
+        error: "Failed to fetch tasks.", 
+        details: error.message,
+        stack: process.env.NODE_ENV === 'production' ? undefined : error.stack
+      });
     }
   });
 
